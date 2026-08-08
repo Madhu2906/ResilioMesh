@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Emergency Management Admin Panel</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; background: #f1f5f9; }
+        h2 { color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
+        .card { background: white; padding: 20px; margin-bottom: 20px; border-left: 6px solid #ef4444; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .card h3 { margin-top: 0; color: #dc2626; }
+        .btn-dispatch { background: #16a34a; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        .btn-dispatch:hover { background: #15803d; }
+        input[type="number"] { padding: 8px; width: 70px; border: 1px solid #cbd5e1; border-radius: 4px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>🚨 Real-time Emergency Distress Feed</h2>
+    <div id="alertsContainer">Fetching active alerts...</div>
+
+    <script>
+        const API_BASE = "http://localhost:8080/api/admin/sos";
+        const ADMIN_LAT = 19.0760; 
+        const ADMIN_LON = 72.8777;
+
+        async function fetchActiveAlerts() {
+            try {
+                const response = await fetch(`${API_BASE}/active`);
+                const alerts = await response.json();
+                
+                const container = document.getElementById('alertsContainer');
+                container.innerHTML = '';
+
+                if (!alerts || alerts.length === 0) {
+                    container.innerHTML = '<p style="color: #64748b;">No active emergency alerts at this moment.</p>';
+                    return;
+                }
+
+                alerts.forEach(alert => {
+                    const estimatedTimeMins = calculateEstimatedTravelTime(ADMIN_LAT, ADMIN_LON, alert.latitude, alert.longitude);
+
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+                        <h3>EMERGENCY CATEGORY: ${alert.category}</h3>
+                        <p><strong>Alert ID:</strong> #${alert.id}</p>
+                        <p><strong>Time Reported:</strong> ${new Date(alert.createdAt).toLocaleString()}</p>
+                        <p><strong>Coordinates:</strong> ${alert.latitude}, ${alert.longitude}</p>
+                        <p><strong>Estimated Route Time:</strong> ~${estimatedTimeMins} mins</p>
+                        <p><a href="https://www.google.com/maps?q=${alert.latitude},${alert.longitude}" target="_blank">📍 Open Location in Google Maps</a></p>
+                        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
+                        <label>Confirm Assistance ETA (Minutes): </label>
+                        <input type="number" id="eta_${alert.id}" value="${estimatedTimeMins}">
+                        <button class="btn-dispatch" onclick="dispatchHelp(${alert.id})">✔ Dispatch Rescue Unit</button>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (err) {
+                console.error("Error fetching alerts:", err);
+            }
+        }
+
+        function calculateEstimatedTravelTime(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distanceKm = R * c;
+            
+            return Math.max(5, Math.ceil(distanceKm * 2) + 3); 
+        }
+
+        async function dispatchHelp(alertId) {
+            const etaMinutes = document.getElementById(`eta_${alertId}`).value;
+            
+            const response = await fetch(`${API_BASE}/accept/${alertId}?etaMinutes=${etaMinutes}`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                alert(`Dispatch confirmed! ETA of ${etaMinutes} mins assigned.`);
+                fetchActiveAlerts();
+            }
+        }
+
+        setInterval(fetchActiveAlerts, 4000);
+        fetchActiveAlerts();
+    </script>
+</body>
+</html>
