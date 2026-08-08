@@ -31,3 +31,12 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Ignore sensitive keys across all subfolders
+**/google-services.json
+**/service-account.json
+
+# Ignore build artifacts across all subfolders
+**/build/
+**/target/
+.dart_tool/

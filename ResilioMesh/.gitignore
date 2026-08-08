@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Sensitive keys
+**/google-services.json
+**/service-account.json
+
+
+# Build directories
+**/build/
+**/android/build/
+.dart_tool/

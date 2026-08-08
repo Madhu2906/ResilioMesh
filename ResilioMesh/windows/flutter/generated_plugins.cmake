@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   firebase_core
+  flutter_inappwebview_windows
   geolocator_windows
   url_launcher_windows
 )

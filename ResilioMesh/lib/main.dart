@@ -17,6 +17,9 @@ import 'notification_store.dart';
 import 'notifications_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'sos_screen.dart';
+import 'emergency_contacts_screen.dart';
+import 'safety_tips_screen.dart';
+import 'disaster_map_screen.dart';
 
 // Global Navigation Key to handle notification taps anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -258,7 +261,7 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
   Future<void> _sendTokenAndLocationToBackend(
       String token, double lat, double lon) async {
    
-        final url = Uri.parse('http://192.168.1.4:8080/api/users/update-device');
+        final url = Uri.parse('http://10.0.2.2:8080/api/users/update-device');
 
     try {
       await http.post(
@@ -511,7 +514,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final List<Widget> _pages = [
     const DashboardContent(),
-    const Center(child: Text("Map Page")),
+    const DisasterMapScreen(),
     const SosScreen(),
     const Center(child: Text("Helpline Page")),
   ];
@@ -696,7 +699,7 @@ class DashboardContent extends StatelessWidget {
                     crossAxisCount: 3,
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
-                    children: const [
+                    children: [
                       DashboardItem(
                         icon: Icons.wb_sunny_outlined,
                         label: 'Live\nWeather',
@@ -710,12 +713,30 @@ class DashboardContent extends StatelessWidget {
                       DashboardItem(
                         icon: Icons.phone_in_talk_outlined,
                         label: 'Emergency\nContact',
-                        iconColor: Color(0xFFF44336),
+                        iconColor: const Color(0xFFF44336),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const EmergencyContactsScreen(),
+                            ),
+                          );
+                        },
                       ),
+
                       DashboardItem(
                         icon: Icons.add_moderator_outlined,
                         label: 'Safety\nTips',
                         iconColor: Color(0xFF4CAF50),
+                        onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const SafetyTipsScreen(),
+                          ),
+                        );
+                      },
                       ),
                       DashboardItem(
                         icon: Icons.assignment_outlined,
@@ -739,12 +760,14 @@ class DashboardItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color iconColor;
+  final VoidCallback? onTap;
 
   const DashboardItem({
     super.key,
     required this.icon,
     required this.label,
     required this.iconColor,
+    this.onTap,
   });
 
   @override
@@ -765,7 +788,7 @@ class DashboardItem extends StatelessWidget {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
-          onTap: () {},
+          onTap: onTap,
           borderRadius: BorderRadius.circular(18),
           splashColor: iconColor.withAlpha(26),
           child: Column(
