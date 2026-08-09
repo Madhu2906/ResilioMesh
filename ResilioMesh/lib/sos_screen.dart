@@ -285,7 +285,7 @@ class _SosScreenState extends State<SosScreen> {
       }
 
       // 3. Backend Endpoint
-      final url = Uri.parse('http://10.0.2.2:8080/api/admin/sos/trigger');
+      final url = Uri.parse('http://192.168.29.246:8080/api/admin/sos/trigger');
 
       final response = await http
           .post(
@@ -351,7 +351,7 @@ class _SosScreenState extends State<SosScreen> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
       try {
-        final url = Uri.parse('http://10.0.2.2:8080/api/admin/sos/status/$alertId');
+        final url = Uri.parse('http://192.168.29.246:8080/api/admin/sos/status/$alertId');
         final response = await http.get(url);
 
         if (response.statusCode == 200) {
