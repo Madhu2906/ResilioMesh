@@ -261,7 +261,7 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
   Future<void> _sendTokenAndLocationToBackend(
       String token, double lat, double lon) async {
    
-        final url = Uri.parse('http://10.0.2.2:8080/api/users/update-device');
+        final url = Uri.parse('http://192.168.1.4:8080/api/users/update-device');
 
     try {
       await http.post(
