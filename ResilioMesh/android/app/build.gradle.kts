@@ -51,3 +51,4 @@ dependencies {
     // Required library dependency for Java 8+ API desugaring
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
+
