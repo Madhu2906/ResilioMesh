@@ -7,6 +7,45 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:torch_light/torch_light.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:telephony/telephony.dart';
+import 'emergency_sms_contacts_screen.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// Top-level entry point required by Telephony package for background processing
+// Top-level background function called when an SMS arrives on the receiver's phone
+@pragma('vm:entry-point')
+void backGroundSmsHandler(SmsMessage message) async {
+  String body = message.body?.toUpperCase() ?? "";
+  debugPrint("🚨 Background SMS Received on Receiver Device: $body");
+
+  if (body.contains("EMERGENCY") || body.contains("SOS")) {
+    // 1. Turn on the flashlight
+    try {
+      await TorchLight.enableTorch();
+    } catch (e) {
+      debugPrint("Background Torch Error: $e");
+    }
+
+    // 2. Play the siren audio in background
+    try {
+      final AudioPlayer backgroundPlayer = AudioPlayer();
+      await backgroundPlayer.setAudioContext( AudioContext(
+        android: AudioContextAndroid(
+          stayAwake: true,
+          usageType: AndroidUsageType.alarm,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.gainTransient,
+        ),
+      ));
+      await backgroundPlayer.setReleaseMode(ReleaseMode.loop);
+      await backgroundPlayer.setVolume(1.0);
+      await backgroundPlayer.play(AssetSource('siren.mp3'));
+    } catch (e) {
+      debugPrint("Background Siren Error: $e");
+    }
+  }
+}
 
 class SosScreen extends StatefulWidget {
   const SosScreen({super.key});
@@ -22,18 +61,17 @@ class _SosScreenState extends State<SosScreen> {
   bool _sosTriggered = false;
   String _selectedCategory = 'GENERAL';
 
-  // Text Controller for Custom Emergency Details
   final TextEditingController _customCategoryController = TextEditingController();
 
-  // Hardware Audio & Strobe Controllers
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isHardwareActive = false;
 
-  // Real-Time Admin Dispatch & ETA Tracking Variables
   int? _activeAlertId;
   bool _isAccepted = false;
   int _etaMinutes = 0;
   Timer? _pollTimer;
+
+  final Telephony _telephony = Telephony.instance;
 
   final List<Map<String, dynamic>> _categories = [
     {'label': 'General', 'icon': Icons.warning_amber_rounded, 'code': 'GENERAL'},
@@ -47,7 +85,9 @@ class _SosScreenState extends State<SosScreen> {
   void initState() {
     super.initState();
 
-    // Listen for FCM Push Notification when Admin accepts SOS
+    _initAudioPlayer();
+    _initIncomingSmsListener();
+
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
       if (message.data['type'] == 'ETA_UPDATE') {
         final eta = int.tryParse(message.data['etaMinutes'] ?? '15') ?? 15;
@@ -62,66 +102,28 @@ class _SosScreenState extends State<SosScreen> {
     });
   }
 
-  @override
-  void dispose() {
-    _cancelTimer();
-    _pollTimer?.cancel();
-    _stopHardwareAlert();
-    _customCategoryController.dispose();
-    _audioPlayer.dispose();
-    super.dispose();
-  }
-
-  // Hardware activation methods (Siren + Flashlight)
-  Future<void> _startHardwareAlert() async {
-    _isHardwareActive = true;
-
-    // 1. Play Emergency Siren Audio on Loop
+  // Pre-configure audio context so alarm audio plays at maximum device alarm volume stream
+  Future<void> _initAudioPlayer() async {
     try {
-      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
-      await _audioPlayer.play(AssetSource('siren.mp3'));
+      await _audioPlayer.setAudioContext( AudioContext(
+        android: AudioContextAndroid(
+          stayAwake: true,
+          usageType: AndroidUsageType.alarm,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.gainTransient,
+        ),
+      ));
     } catch (e) {
-      debugPrint("Audio Player Error: $e");
-    }
-
-    // 2. Turn on Device Flashlight
-    try {
-      final isTorchAvailable = await TorchLight.isTorchAvailable();
-      if (isTorchAvailable && _isHardwareActive) {
-        await TorchLight.enableTorch();
-      }
-    } catch (e) {
-      debugPrint("Torch Light Error: $e");
+      debugPrint("Audio Context Setup Error: $e");
     }
   }
 
-  Future<void> _stopHardwareAlert() async {
-    _isHardwareActive = false;
-
-    // Stop Siren
-    try {
-      await _audioPlayer.stop();
-    } catch (e) {
-      debugPrint("Audio Stop Error: $e");
-    }
-
-    // Disable Flashlight
-    try {
-      await TorchLight.disableTorch();
-    } catch (e) {
-      debugPrint("Torch Disable Error: $e");
-    }
-  }
-
-  // Handle Location Permission and GPS state checks
   Future<bool> _handleLocationPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Location services (GPS) are disabled. Please enable GPS in device settings.'),
-          ),
+          const SnackBar(content: Text('Location services are disabled. Please enable GPS.')),
         );
       }
       return false;
@@ -133,9 +135,7 @@ class _SosScreenState extends State<SosScreen> {
       if (permission == LocationPermission.denied) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Location permission is required to send live coordinates.'),
-            ),
+            const SnackBar(content: Text('Location permissions are denied.')),
           );
         }
         return false;
@@ -146,9 +146,7 @@ class _SosScreenState extends State<SosScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Location permissions are permanently denied. Please enable them in app settings.',
-            ),
+            content: Text('Location permissions are permanently denied. Please enable them in settings.'),
           ),
         );
       }
@@ -158,7 +156,110 @@ class _SosScreenState extends State<SosScreen> {
     return true;
   }
 
-  // Start 3-Second Visible Countdown Dialog
+  void _initIncomingSmsListener() async {
+    Map<Permission, PermissionStatus> statuses = await [
+      Permission.sms,
+      Permission.phone,
+      Permission.camera,
+    ].request();
+
+    if (statuses[Permission.sms]?.isGranted == true) {
+      debugPrint("✅ SMS Listening active...");
+
+      _telephony.listenIncomingSms(
+        onNewMessage: (SmsMessage message) async {
+          String body = message.body?.toUpperCase() ?? "";
+          String sender = message.address ?? "Unknown";
+
+          debugPrint("📩 SMS Received from $sender: $body");
+
+          if (body.contains("EMERGENCY") || body.contains("SOS")) {
+            await _startHardwareAlert();
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('🚨 EMERGENCY SMS RECEIVED FROM $sender! SIREN & TORCH ACTIVATED!'),
+                  backgroundColor: Colors.red,
+                  duration: const Duration(seconds: 8),
+                ),
+              );
+            }
+          }
+        },
+        onBackgroundMessage: backGroundSmsHandler,
+        listenInBackground: true,
+      );
+    } else {
+      debugPrint("❌ SMS permissions denied by user.");
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelTimer();
+    _pollTimer?.cancel();
+    _stopHardwareAlert();
+    _customCategoryController.dispose();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startHardwareAlert() async {
+    if (_isHardwareActive) return;
+    if (mounted) setState(() => _isHardwareActive = true);
+
+    // 1. SOUND: Play alarm/siren sound with fallbacks
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _audioPlayer.setVolume(1.0);
+      
+      // AssetSource automatically prefixes 'assets/'
+      try {
+        await _audioPlayer.play(AssetSource('siren.mp3'));
+      } catch (_) {
+        await _audioPlayer.play(AssetSource('siren.mp3'));
+      }
+      debugPrint("🔊 Siren audio playing");
+    } catch (e) {
+      debugPrint("❌ Audio Error: $e");
+    }
+
+    // 2. TORCH: Request camera permission and turn on torch
+    try {
+      var cameraStatus = await Permission.camera.status;
+      if (!cameraStatus.isGranted) {
+        cameraStatus = await Permission.camera.request();
+      }
+
+      if (cameraStatus.isGranted) {
+        await TorchLight.enableTorch();
+        debugPrint("🔦 Torch enabled successfully");
+      } else {
+        debugPrint("❌ Camera permission denied for Torch");
+      }
+    } catch (e) {
+      debugPrint("❌ Torch Error: $e");
+    }
+  }
+
+  Future<void> _stopHardwareAlert() async {
+    if (mounted) setState(() => _isHardwareActive = false);
+
+    try {
+      await _audioPlayer.stop();
+    } catch (e) {
+      debugPrint("Audio Stop Error: $e");
+    }
+
+    try {
+      await TorchLight.disableTorch();
+    } catch (e) {
+      debugPrint("Torch Disable Error: $e");
+    }
+  }
+
   void _startSosCountdown() {
     if (_isSending || _sosTriggered) return;
 
@@ -265,26 +366,25 @@ class _SosScreenState extends State<SosScreen> {
       _isSending = true;
     });
 
+    // 1. Immediately fire siren & torch upon SOS trigger
+    await _startHardwareAlert();
+
     try {
-      // 1. Check permissions first
       final bool hasPermission = await _handleLocationPermission();
       if (!hasPermission) {
         if (mounted) setState(() => _isSending = false);
         return;
       }
 
-      // 2. Fetch high-accuracy GPS coordinates
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
-      // Construct category payload (Includes user typed description if 'OTHER' selected)
       String categoryPayload = _selectedCategory;
       if (_selectedCategory == 'OTHER' && _customCategoryController.text.trim().isNotEmpty) {
         categoryPayload = "OTHER: ${_customCategoryController.text.trim()}";
       }
 
-      // 3. Backend Endpoint
       final url = Uri.parse('http://192.168.1.4:8080/api/admin/sos/trigger');
 
       final response = await http
@@ -318,10 +418,6 @@ class _SosScreenState extends State<SosScreen> {
               : null;
         });
 
-        // Trigger Flashlight and Siren Alarm
-        _startHardwareAlert();
-
-        // Start polling for Admin acceptance
         if (_activeAlertId != null) {
           _startPollingForAcceptance(_activeAlertId!);
         }
@@ -329,7 +425,7 @@ class _SosScreenState extends State<SosScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Colors.green,
-            content: Text('🚨 SOS Alert transmitted! Waiting for Admin dispatch...'),
+            content: Text('🚨 SOS Alert transmitted! Siren & Torch active.'),
           ),
         );
       } else {
@@ -346,7 +442,6 @@ class _SosScreenState extends State<SosScreen> {
     }
   }
 
-  // Polls backend every 3 seconds to check if Admin clicked 'Dispatch Rescue Unit'
   void _startPollingForAcceptance(int alertId) {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
@@ -372,9 +467,26 @@ class _SosScreenState extends State<SosScreen> {
     });
   }
 
-  // Fallback SMS launcher in case API or internet fails
   Future<void> _sendEmergencySms() async {
+    // Start hardware alert immediately when manual SMS is triggered
+    await _startHardwareAlert();
+
     try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> contacts = prefs.getStringList('emergency_contacts') ?? [];
+
+      if (contacts.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No emergency contacts found! Tap top right 3 dots (⋮) to add contacts.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
       final bool hasPermission = await _handleLocationPermission();
       if (!hasPermission) return;
 
@@ -392,23 +504,60 @@ class _SosScreenState extends State<SosScreen> {
       final String message =
           "EMERGENCY ALERT ($categoryText)! I need immediate help. Live Location: $mapsLink";
 
-      final Uri smsUri = Uri(
-        scheme: 'sms',
-        path: '8369732553',
-        queryParameters: <String, String>{'body': message},
-      );
+      bool smsSentSuccessfully = false;
 
-      if (await canLaunchUrl(smsUri)) {
-        await launchUrl(smsUri);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not launch SMS application.')),
-          );
+      // Attempt Direct Telephony SMS first
+      try {
+        bool? permissionsGranted = await _telephony.requestPhoneAndSmsPermissions;
+
+        if (permissionsGranted == true) {
+          for (String number in contacts) {
+            await _telephony.sendSms(
+              to: number,
+              message: message,
+            );
+          }
+          smsSentSuccessfully = true;
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('🚨 Emergency SMS sent to ${contacts.length} contact(s)!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } catch (telephonyError) {
+        debugPrint("Telephony background SMS failed: $telephonyError");
+      }
+
+      // Fallback to Native SMS Intent if background send fails
+      if (!smsSentSuccessfully) {
+        final String recipientString = contacts.map((e) => e.replaceAll(RegExp(r'[^\d+]'), '')).join(';');
+        final Uri smsUri = Uri(
+          scheme: 'sms',
+          path: recipientString,
+          queryParameters: <String, String>{'body': message},
+        );
+
+        if (await canLaunchUrl(smsUri)) {
+          await launchUrl(smsUri, mode: LaunchMode.externalApplication);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Could not open default SMS app.')),
+            );
+          }
         }
       }
     } catch (e) {
       debugPrint("SMS Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
   }
 
@@ -418,7 +567,7 @@ class _SosScreenState extends State<SosScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Server Unreachable'),
         content: const Text(
-          'Could not connect to emergency network. Would you like to send an emergency SMS with your live location instead?',
+          'Could not connect to emergency network. Would you like to send an emergency SMS to all your saved emergency contacts?',
         ),
         actions: [
           TextButton(
@@ -442,7 +591,7 @@ class _SosScreenState extends State<SosScreen> {
 
   void _resetAlertState() {
     _pollTimer?.cancel();
-    _stopHardwareAlert(); // Stops siren and flashlight
+    _stopHardwareAlert();
     _customCategoryController.clear();
     setState(() {
       _sosTriggered = false;
@@ -456,258 +605,284 @@ class _SosScreenState extends State<SosScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
-        child: Column(
-          children: [
-            const Text(
-              'EMERGENCY DISTRESS SIGNAL',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF334155),
-                letterSpacing: 1.1,
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'EMERGENCY SOS',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        centerTitle: true,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'contacts') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const EmergencySmsContactsScreen(),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'contacts',
+                child: Row(
+                  children: [
+                    Icon(Icons.contacts_rounded, color: Color(0xFFFF5252)),
+                    SizedBox(width: 10),
+                    Text('Emergency Contacts'),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Tap button once to initiate emergency broadcast. You will have 3 seconds to cancel.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-
-            // Emergency Category Selection
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Select Emergency Type:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ],
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+          child: Column(
+            children: [
+              const Text(
+                'EMERGENCY DISTRESS SIGNAL',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF334155),
+                  letterSpacing: 1.1,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              const Text(
+                'Tap button once to initiate emergency broadcast. You will have 3 seconds to cancel.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 24),
 
-            // Horizontally Scrollable Category Bar to Fit 5 Categories Seamlessly
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: _categories.map((cat) {
-                  final bool isSelected = _selectedCategory == cat['code'];
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: GestureDetector(
-                      onTap: () {
-                        if (!_sosTriggered && !_isSending) {
-                          setState(() {
-                            _selectedCategory = cat['code'];
-                          });
-                        }
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(
-                            vertical: 10, horizontal: 14),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFFFF5252)
-                              : Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Select Emergency Type:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _categories.map((cat) {
+                    final bool isSelected = _selectedCategory == cat['code'];
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: GestureDetector(
+                        onTap: () {
+                          if (!_sosTriggered && !_isSending) {
+                            setState(() {
+                              _selectedCategory = cat['code'];
+                            });
+                          }
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 14),
+                          decoration: BoxDecoration(
                             color: isSelected
                                 ? const Color(0xFFFF5252)
-                                : Colors.grey.shade300,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            Icon(
-                              cat['icon'],
-                              color: isSelected ? Colors.white : Colors.grey.shade700,
+                                : Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected
+                                  ? const Color(0xFFFF5252)
+                                  : Colors.grey.shade300,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              cat['label'],
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(
+                                cat['icon'],
                                 color: isSelected ? Colors.white : Colors.grey.shade700,
                               ),
-                            ),
-                          ],
+                              const SizedBox(height: 4),
+                              Text(
+                                cat['label'],
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isSelected ? Colors.white : Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }).toList(),
+                ),
               ),
-            ),
 
-            // Custom TextField Input - Appears dynamically when 'OTHER' is selected
-            if (_selectedCategory == 'OTHER') ...[
-              const SizedBox(height: 16),
-              TextField(
-                controller: _customCategoryController,
-                enabled: !_sosTriggered && !_isSending,
-                decoration: InputDecoration(
-                  hintText: 'Type emergency detail (e.g. Gas Leak, Flood)...',
-                  hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
-                  prefixIcon: const Icon(Icons.edit_note_rounded, color: Color(0xFFFF5252)),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
+              if (_selectedCategory == 'OTHER') ...[
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _customCategoryController,
+                  enabled: !_sosTriggered && !_isSending,
+                  decoration: InputDecoration(
+                    hintText: 'Type emergency detail (e.g. Gas Leak, Flood)...',
+                    hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                    prefixIcon: const Icon(Icons.edit_note_rounded, color: Color(0xFFFF5252)),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFFF5252), width: 2),
+                    ),
                   ),
-                  focusedBorder: OutlineInputBorder(
+                ),
+              ],
+
+              const SizedBox(height: 30),
+
+              if (_isAccepted) ...[
+                EtaTrackingWidget(initialEtaMinutes: _etaMinutes),
+                const SizedBox(height: 20),
+              ] else if (_sosTriggered) ...[
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFFF5252), width: 2),
+                    border: Border.all(color: Colors.orange.shade300),
                   ),
-                ),
-              ),
-            ],
-
-            const SizedBox(height: 30),
-
-            // IF ACCEPTED BY ADMIN: Show Countdown Tracker
-            if (_isAccepted) ...[
-              EtaTrackingWidget(initialEtaMinutes: _etaMinutes),
-              const SizedBox(height: 20),
-            ]
-            // IF SOS SENT BUT WAITING FOR ADMIN: Show Waiting Status Banner
-            else if (_sosTriggered) ...[
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 10),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.shade300),
-                ),
-                child: Row(
-                  children: const [
-                    SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2.5, color: Colors.orange),
-                    ),
-                    SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        'SOS Signal Transmitted!\nWaiting for Admin Dispatch & ETA...',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, color: Colors.orange),
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.orange),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-            ],
-
-            // SOS Single-Tap Button UI
-            GestureDetector(
-              onTap: _isSending || _sosTriggered ? null : _startSosCountdown,
-              child: Container(
-                width: 190,
-                height: 190,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _sosTriggered
-                      ? Colors.green
-                      : const Color(0xFFFF5252),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (_sosTriggered
-                              ? Colors.green
-                              : const Color(0xFFFF5252))
-                          .withValues(alpha: 0.4),
-                      blurRadius: 20,
-                      spreadRadius: 5,
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (_isSending)
-                      const CircularProgressIndicator(color: Colors.white)
-                    else if (_sosTriggered) ...[
-                      const Icon(Icons.check_circle,
-                          size: 50, color: Colors.white),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'ALERT SENT!',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      )
-                    ] else ...[
-                      const Text(
-                        'SOS',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 42,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 2.0,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'TAP TO TRIGGER',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                      SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          'SOS Signal Transmitted!\nWaiting for Admin Dispatch & ETA...',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, color: Colors.orange),
                         ),
                       ),
                     ],
-                  ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+
+              GestureDetector(
+                onTap: _isSending || _sosTriggered ? null : _startSosCountdown,
+                child: Container(
+                  width: 190,
+                  height: 190,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _sosTriggered
+                        ? Colors.green
+                        : const Color(0xFFFF5252),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_sosTriggered
+                                ? Colors.green
+                                : const Color(0xFFFF5252))
+                            .withValues(alpha: 0.4),
+                        blurRadius: 20,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isSending)
+                        const CircularProgressIndicator(color: Colors.white)
+                      else if (_sosTriggered) ...[
+                        const Icon(Icons.check_circle,
+                            size: 50, color: Colors.white),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'ALERT SENT!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        )
+                      ] else ...[
+                        const Text(
+                          'SOS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 42,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.0,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'TAP TO TRIGGER',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-            ),
 
-            const SizedBox(height: 30),
+              const SizedBox(height: 30),
 
-            // If SOS is already triggered, show button to reset and stop hardware sound/flashlight
-            if (_sosTriggered)
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey.shade800,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 12),
+              if (_sosTriggered || _isHardwareActive)
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.shade800,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.volume_off_rounded, color: Colors.white),
+                  label: const Text('STOP SIREN & RESET',
+                      style: TextStyle(color: Colors.white)),
+                  onPressed: _resetAlertState,
+                )
+              else
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF5252),
+                    side: const BorderSide(color: Color(0xFFFF5252)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.sms_rounded),
+                  label: const Text('SEND SMS EMERGENCY ALERT'),
+                  onPressed: _sendEmergencySms,
                 ),
-                icon: const Icon(Icons.volume_off_rounded, color: Colors.white),
-                label: const Text('STOP SIREN & RESET',
-                    style: TextStyle(color: Colors.white)),
-                onPressed: _resetAlertState,
-              )
-            else
-              // Direct SMS Fallback Trigger Button
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFFFF5252),
-                  side: const BorderSide(color: Color(0xFFFF5252)),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 12),
-                ),
-                icon: const Icon(Icons.sms_rounded),
-                label: const Text('SEND SMS EMERGENCY ALERT'),
-                onPressed: _sendEmergencySms,
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// Inline Countdown Widget Component
 class EtaTrackingWidget extends StatefulWidget {
   final int initialEtaMinutes;
 

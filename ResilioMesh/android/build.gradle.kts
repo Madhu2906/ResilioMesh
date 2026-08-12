@@ -32,3 +32,13 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+
+
+    afterEvaluate {
+        if (name == "telephony") {
+            extensions.configure<com.android.build.api.dsl.LibraryExtension> {
+                namespace = "com.shounakmulay.telephony"
+            }
+        
+    }
+}
