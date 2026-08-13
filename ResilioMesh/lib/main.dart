@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -22,6 +23,9 @@ import 'disaster_details_screen.dart';
 import 'about_us_screen.dart';
 import 'dart:convert';
 import 'live_weather_screen.dart';
+import 'login_screen.dart';
+import 'auth_service.dart';
+import 'profile_screen.dart';
 
 // Global Navigation Key to handle notification taps anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -270,7 +274,7 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
   Future<void> _sendTokenAndLocationToBackend(
       String token, double lat, double lon) async {
    
-        final url = Uri.parse('http://192.168.1.4:8080/api/users/update-device');
+        final url = Uri.parse('http://10.120.159.213:8080/api/users/update-device');
 
     try {
       await http.post(
@@ -300,6 +304,28 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
         useMaterial3: true,
       ),
       home: const SplashScreen(),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.hasData) {
+          return const HomeScreen();
+        }
+        return const AuthScreen();
+      },
     );
   }
 }
@@ -447,7 +473,7 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(seconds: 3));
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (context) => const HomeScreen()),
+      MaterialPageRoute(builder: (context) => const AuthWrapper()),
     );
   }
 
@@ -855,6 +881,14 @@ class AppDrawer extends StatelessWidget {
               MaterialPageRoute(builder: (context) => const HomeScreen()),
             );
           }),
+          _buildDrawerTile(Icons.person_outline_rounded, 'Profile', () {
+            Navigator.pop(context);
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const ProfileScreen(),
+              ),
+            );
+          }),
           _buildDrawerTile(Icons.info_outline_rounded, 'About Us', () {
             Navigator.pop(context);
             Navigator.of(
@@ -872,6 +906,14 @@ class AppDrawer extends StatelessWidget {
           }),
           _buildDrawerTile(Icons.share_outlined, 'Share App', () {}),
           _buildDrawerTile(Icons.star_outline_rounded, 'Rate Us', () {}),
+          // 🔴 LOGOUT TILE
+          _buildDrawerTile(
+            Icons.logout_rounded,
+            'Logout',
+            () => AuthService.confirmAndLogout(context),
+            textColor: const Color(0xFFD32F2F),
+            iconColor: const Color(0xFFD32F2F),
+          ),
           const Spacer(),
           const Padding(
             padding: EdgeInsets.only(bottom: 24.0),
@@ -889,16 +931,22 @@ class AppDrawer extends StatelessWidget {
     );
   }
 
-  Widget _buildDrawerTile(IconData icon, String title, VoidCallback onTap) {
+Widget _buildDrawerTile(
+    IconData icon,
+    String title,
+    VoidCallback onTap, {
+    Color iconColor = const Color(0xFF34495E),
+    Color textColor = const Color(0xFF2C3E50),
+  }) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 2),
-      leading: Icon(icon, color: const Color(0xFF34495E), size: 24),
+      leading: Icon(icon, color: iconColor, size: 24),
       title: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 15,
           fontWeight: FontWeight.w600,
-          color: Color(0xFF2C3E50),
+          color: textColor,
         ),
       ),
       onTap: onTap,

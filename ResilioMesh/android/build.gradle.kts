@@ -25,20 +25,21 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+subprojects {
+    plugins.withId("com.android.library") {
+        if (name == "telephony") {
+            extensions.configure<com.android.build.api.dsl.LibraryExtension> {
+                namespace = "com.shounakmulay.telephony"
+            }
+        }
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
-}
-
-
-    afterEvaluate {
-        if (name == "telephony") {
-            extensions.configure<com.android.build.api.dsl.LibraryExtension> {
-                namespace = "com.shounakmulay.telephony"
-            }
-        
-    }
 }

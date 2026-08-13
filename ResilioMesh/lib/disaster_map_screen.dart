@@ -13,7 +13,7 @@ class DisasterEvent {
   final String category;
   final LatLng location;
   final String locationName;
-  final String severity; // High, Moderate, Low
+  final String severity; 
   final String time;
   final IconData icon;
   final Color color;
@@ -45,13 +45,63 @@ class DisasterMapScreen extends StatefulWidget {
 class _DisasterMapScreenState extends State<DisasterMapScreen> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _startController = TextEditingController();
+  final TextEditingController _destController = TextEditingController();
 
   LatLng _centerLocation = const LatLng(20.5937, 78.9629); // Center of India
   LatLng? _userLocation;
   bool _isLoading = false;
   String _selectedFilter = 'All';
+  bool _showRoutePanel = false;
+  bool _isRouteMinimized = false; // Controls mini view state
+  List<LatLng> _routePoints = [];
 
-  // RESTORED: Original India Disaster Data
+  // REAL LANDSLIDE SUSCEPTIBILITY HAZARD BELTS (Polygons)
+  final List<Polygon> _landslideProneZones = [
+    // Western Ghats Belt (Wayanad, Idukki, Konkan, Mahabaleshwar)
+    Polygon(
+      points: const [
+        LatLng(18.5000, 73.3000),
+        LatLng(16.0000, 74.2000),
+        LatLng(11.5000, 76.5000),
+        LatLng(9.5000, 77.1000),
+        LatLng(10.0000, 76.3000),
+        LatLng(14.0000, 74.4000),
+        LatLng(18.0000, 72.9000),
+      ],
+      color: Colors.amber.withOpacity(0.25),
+      borderColor: Colors.amber.shade900,
+      borderStrokeWidth: 2.0,
+    ),
+    // Northwest Himalayan Belt (Uttarakhand & Himachal Corridor)
+    Polygon(
+      points: const [
+        LatLng(32.5000, 76.0000),
+        LatLng(31.8000, 78.6000),
+        LatLng(30.0000, 80.2000),
+        LatLng(29.3000, 79.5000),
+        LatLng(30.2000, 77.8000),
+        LatLng(32.0000, 75.8000),
+      ],
+      color: Colors.deepOrange.withOpacity(0.25),
+      borderColor: Colors.red.shade900,
+      borderStrokeWidth: 2.0,
+    ),
+    // Sikkim & North West Bengal / Teesta Valley Corridor
+    Polygon(
+      points: const [
+        LatLng(27.8000, 88.0000),
+        LatLng(27.9000, 88.9000),
+        LatLng(26.8000, 88.8000),
+        LatLng(26.7000, 88.2000),
+      ],
+      color: Colors.amber.withOpacity(0.30),
+      borderColor: Colors.amber.shade900,
+      borderStrokeWidth: 2.0,
+    ),
+  ];
+
+  // Active Disasters Array
   final List<DisasterEvent> _allDisasters = [
     DisasterEvent(
       title: 'Urban Waterlogging Alert',
@@ -62,7 +112,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '10 mins ago',
       icon: Icons.water_damage_rounded,
       color: Colors.blue,
-      isRealData: false,
     ),
     DisasterEvent(
       title: 'Severe Riverine Flood Alert',
@@ -73,7 +122,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '30 mins ago',
       icon: Icons.water_damage_rounded,
       color: Colors.blue,
-      isRealData: false,
     ),
     DisasterEvent(
       title: 'Coastal Depression Warning',
@@ -84,7 +132,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '1 hour ago',
       icon: Icons.air_rounded,
       color: Colors.cyan,
-      isRealData: false,
     ),
     DisasterEvent(
       title: 'Mild Seismic Tremor (Mag 3.4)',
@@ -95,7 +142,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '2 hours ago',
       icon: Icons.terrain_rounded,
       color: Colors.brown,
-      isRealData: false,
     ),
     DisasterEvent(
       title: 'Commercial Storage Fire',
@@ -106,7 +152,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '15 mins ago',
       icon: Icons.local_fire_department_rounded,
       color: Colors.orange,
-      isRealData: false,
     ),
     DisasterEvent(
       title: 'Industrial Gas Leakage Alert',
@@ -117,7 +162,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
       time: '45 mins ago',
       icon: Icons.science_rounded,
       color: Colors.purple,
-      isRealData: false,
     ),
   ];
 
@@ -125,22 +169,20 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
   void initState() {
     super.initState();
     _getUserCurrentLocation();
-    _fetchRealDisasters();
+    _fetchRealEarthquakes();
+    _fetchRealNasaLandslides();
   }
 
-  // Fetch real live events from USGS & NASA EONET without touching static list formatting
-  Future<void> _fetchRealDisasters() async {
-    List<DisasterEvent> fetchedRealEvents = [];
-
-    // 1. Fetch Live Earthquakes from USGS API
+  // Real Earthquake API (USGS)
+  Future<void> _fetchRealEarthquakes() async {
     try {
-      final usgsUrl = Uri.parse(
-          'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson');
-      final response = await http.get(usgsUrl);
+      final url = Uri.parse('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson');
+      final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List features = data['features'] ?? [];
+        List<DisasterEvent> fetched = [];
 
         for (var feature in features) {
           final props = feature['properties'];
@@ -149,7 +191,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
           double lat = (coords[1] as num).toDouble();
           double mag = (props['mag'] as num?)?.toDouble() ?? 3.0;
 
-          fetchedRealEvents.add(
+          fetched.add(
             DisasterEvent(
               title: 'Live Earthquake (M $mag)',
               category: 'Earthquake',
@@ -163,77 +205,66 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
             ),
           );
         }
+
+        if (mounted && fetched.isNotEmpty) {
+          setState(() {
+            _allDisasters.addAll(fetched);
+          });
+        }
       }
     } catch (_) {}
+  }
 
-    // 2. Fetch Live Events from NASA EONET API
+  // Real NASA COOLR Landslide API Points
+  Future<void> _fetchRealNasaLandslides() async {
     try {
       final nasaUrl = Uri.parse(
-          'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=15');
+          'https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/COOLR_Events_Points/FeatureServer/0/query?where=1%3D1&outFields=event_title,location_description,landslide_category,event_date,trigger&outSR=4326&f=json&resultRecordCount=100');
+
       final response = await http.get(nasaUrl);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List events = data['events'] ?? [];
+        final List features = data['features'] ?? [];
+        List<DisasterEvent> realLandslides = [];
 
-        for (var event in events) {
-          final title = event['title'] ?? 'Natural Disaster';
-          final categories = event['categories'] as List?;
-          String categoryName = 'General';
-          IconData icon = Icons.warning_rounded;
-          Color color = Colors.purple;
+        for (var f in features) {
+          final attr = f['attributes'];
+          final geom = f['geometry'];
 
-          if (categories != null && categories.isNotEmpty) {
-            String catId = categories[0]['id'] ?? '';
-            if (catId.toLowerCase().contains('fire')) {
-              categoryName = 'Fire';
-              icon = Icons.local_fire_department_rounded;
-              color = Colors.orange;
-            } else if (catId.toLowerCase().contains('storm')) {
-              categoryName = 'Cyclone';
-              icon = Icons.air_rounded;
-              color = Colors.cyan;
-            } else if (catId.toLowerCase().contains('flood')) {
-              categoryName = 'Flood';
-              icon = Icons.water_damage_rounded;
-              color = Colors.blue;
-            }
+          if (geom != null && geom['y'] != null && geom['x'] != null) {
+            double lat = (geom['y'] as num).toDouble();
+            double lon = (geom['x'] as num).toDouble();
+
+            realLandslides.add(
+              DisasterEvent(
+                title: attr['event_title'] ?? 'Real Landslide Incident',
+                category: 'Landslide',
+                location: LatLng(lat, lon),
+                locationName: attr['location_description'] ?? 'Hazard Area',
+                severity: 'High',
+                time: attr['event_date'] != null
+                    ? DateTime.fromMillisecondsSinceEpoch(attr['event_date'])
+                        .toString()
+                        .split(' ')[0]
+                    : 'Reported Incident',
+                icon: Icons.warning_amber_rounded,
+                color: Colors.amber.shade900,
+                isRealData: true,
+              ),
+            );
           }
+        }
 
-          final geometries = event['geometry'] as List?;
-          if (geometries != null && geometries.isNotEmpty) {
-            final coords = geometries.last['coordinates'] as List?;
-            if (coords != null && coords.length >= 2) {
-              double lon = (coords[0] as num).toDouble();
-              double lat = (coords[1] as num).toDouble();
-
-              fetchedRealEvents.add(
-                DisasterEvent(
-                  title: title,
-                  category: categoryName,
-                  location: LatLng(lat, lon),
-                  locationName: 'NASA Global Feed',
-                  severity: 'Moderate',
-                  time: 'Live',
-                  icon: icon,
-                  color: color,
-                  isRealData: true,
-                ),
-              );
-            }
-          }
+        if (mounted && realLandslides.isNotEmpty) {
+          setState(() {
+            _allDisasters.addAll(realLandslides);
+          });
         }
       }
     } catch (_) {}
-
-    if (mounted && fetchedRealEvents.isNotEmpty) {
-      setState(() {
-        _allDisasters.addAll(fetchedRealEvents);
-      });
-    }
   }
 
-  // Get GPS Location for India
   Future<void> _getUserCurrentLocation() async {
     setState(() => _isLoading = true);
 
@@ -255,7 +286,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
     }
 
     if (permission == LocationPermission.deniedForever) {
-      _showSnackBar('Location permissions are permanently denied');
+      _showSnackBar('Location permissions permanently denied');
       setState(() => _isLoading = false);
       return;
     }
@@ -278,44 +309,99 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
     }
   }
 
-  // Free OpenStreetMap Geocoding Search (Restricted to India)
+  Future<LatLng?> _geocodeAddress(String query) async {
+    final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?format=json&q=$query, India&limit=1');
+    try {
+      final response = await http.get(url, headers: {'User-Agent': 'ResilioMesh_App'});
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          return LatLng(double.parse(data[0]['lat']), double.parse(data[0]['lon']));
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _searchLocationInIndia(String query) async {
     if (query.trim().isEmpty) return;
 
     setState(() => _isLoading = true);
     FocusScope.of(context).unfocus();
 
-    final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/search?format=json&q=$query, India&countrycodes=in&limit=1');
+    LatLng? pos = await _geocodeAddress(query);
+    if (pos != null) {
+      setState(() {
+        _centerLocation = pos;
+        _isLoading = false;
+      });
+      _mapController.move(pos, 12.0);
+    } else {
+      _showSnackBar('Location not found in India');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _calculateRoute() async {
+    if (_startController.text.trim().isEmpty || _destController.text.trim().isEmpty) {
+      _showSnackBar('Enter both Start and Destination places');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    FocusScope.of(context).unfocus();
+
+    LatLng? start;
+    if (_startController.text.trim().toLowerCase() == 'my location' ||
+        _startController.text.trim().toLowerCase() == 'current location') {
+      if (_userLocation == null) {
+        await _getUserCurrentLocation();
+      }
+      start = _userLocation;
+    } else {
+      start = await _geocodeAddress(_startController.text);
+    }
+
+    LatLng? destination = await _geocodeAddress(_destController.text);
+
+    if (start == null || destination == null) {
+      _showSnackBar('Could not find starting or destination location');
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    final osrmUrl = Uri.parse(
+        'https://router.project-osrm.org/route/v1/driving/'
+        '${start.longitude},${start.latitude};${destination.longitude},${destination.latitude}'
+        '?overview=full&geometries=geojson');
 
     try {
-      final response = await http.get(url, headers: {
-        'User-Agent': 'ResilioMesh_Disaster_App',
-      });
-
+      final response = await http.get(osrmUrl);
       if (response.statusCode == 200) {
-        final List data = jsonDecode(response.body);
-        if (data.isNotEmpty) {
-          double lat = double.parse(data[0]['lat']);
-          double lon = double.parse(data[0]['lon']);
-          LatLng searchedPos = LatLng(lat, lon);
+        final data = jsonDecode(response.body);
+        final List coordinates = data['routes'][0]['geometry']['coordinates'];
 
-          setState(() {
-            _centerLocation = searchedPos;
-            _isLoading = false;
-          });
+        setState(() {
+          _routePoints = coordinates
+              .map((coord) => LatLng(coord[1].toDouble(), coord[0].toDouble()))
+              .toList();
+          _isLoading = false;
+          _isRouteMinimized = true; // Auto-minimize upon finding route
+        });
 
-          _mapController.move(searchedPos, 12.0);
-        } else {
-          _showSnackBar('Location not found in India');
-          setState(() => _isLoading = false);
-        }
+        _mapController.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints([start, destination]),
+            padding: const EdgeInsets.all(60),
+          ),
+        );
       } else {
-        _showSnackBar('Search service error');
+        _showSnackBar('Route service unavailable');
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      _showSnackBar('Search failed. Check network');
+      _showSnackBar('Failed to calculate route');
       setState(() => _isLoading = false);
     }
   }
@@ -418,23 +504,36 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
 
   @override
   Widget build(BuildContext context) {
-    List<DisasterEvent> filteredDisasters = _selectedFilter == 'All'
-        ? _allDisasters
-        : _allDisasters
-            .where((e) =>
-                e.category.toLowerCase() == _selectedFilter.toLowerCase())
-            .toList();
+    // Show real landslides when route active OR filter matches
+    List<DisasterEvent> filteredDisasters = _allDisasters.where((event) {
+      if (event.category == 'Landslide' && _routePoints.isEmpty) {
+        return false;
+      }
+      if (_selectedFilter == 'All') return true;
+      return event.category.toLowerCase() == _selectedFilter.toLowerCase();
+    }).toList();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Disaster Map',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
         backgroundColor: const Color(0xFFFF5252),
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(_showRoutePanel ? Icons.search : Icons.directions),
+            tooltip: _showRoutePanel ? 'Standard Search' : 'Directions',
+            onPressed: () {
+              setState(() {
+                _showRoutePanel = !_showRoutePanel;
+                _isRouteMinimized = false;
+              });
+            },
+          )
+        ],
       ),
       body: Stack(
         children: [
-          // OpenStreetMap Layer
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -448,40 +547,52 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.resiliomesh',
               ),
+
+              // LANDSLIDE-PRONE HAZARD ZONES (Polygons render when route is active)
+              if (_routePoints.isNotEmpty)
+                PolygonLayer(polygons: _landslideProneZones),
+
+              // ROUTE POLYLINE
+              if (_routePoints.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _routePoints,
+                      strokeWidth: 5.0,
+                      color: Colors.blueAccent,
+                    ),
+                  ],
+                ),
+
+              // MARKER LAYER
               MarkerLayer(
                 markers: [
-                  // Current User Location Marker
                   if (_userLocation != null)
                     Marker(
                       point: _userLocation!,
                       width: 50,
                       height: 50,
-                      child: Tooltip(
-                        message: "Your Location",
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.3),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.my_location_rounded,
-                            color: Colors.blueAccent,
-                            size: 28,
-                          ),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.my_location_rounded,
+                          color: Colors.blueAccent,
+                          size: 28,
                         ),
                       ),
                     ),
 
-                  // Disaster Location Markers
                   ...filteredDisasters.map((event) {
                     return Marker(
                       point: event.location,
-                      width: 44,
-                      height: 44,
+                      width: 42,
+                      height: 42,
                       child: GestureDetector(
                         onTap: () => _showDisasterDetails(event),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 300),
+                        child: Container(
                           decoration: BoxDecoration(
                             color: Colors.white,
                             shape: BoxShape.circle,
@@ -497,7 +608,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
                           child: Icon(
                             event.icon,
                             color: event.color,
-                            size: 22,
+                            size: 20,
                           ),
                         ),
                       ),
@@ -508,88 +619,226 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
             ],
           ),
 
-          // Top Search Bar
+          // Top Navigation Stack
           Positioned(
-            top: 14,
-            left: 14,
-            right: 14,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(30),
-                boxShadow: const [
-                  BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 8,
-                      offset: Offset(0, 2))
-                ],
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 8),
-                  const Icon(Icons.search, color: Colors.grey),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: _searchLocationInIndia,
-                      decoration: const InputDecoration(
-                        hintText: 'Search (e.g. Surat, Assam)',
-                        border: InputBorder.none,
+            top: 10,
+            left: 10,
+            right: 10,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!_showRoutePanel)
+                  Card(
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.search, color: Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              textInputAction: TextInputAction.search,
+                              onSubmitted: _searchLocationInIndia,
+                              decoration: const InputDecoration(
+                                hintText: 'Search city or area in India...',
+                                border: InputBorder.none,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.arrow_forward,
+                                color: Color(0xFFFF5252)),
+                            onPressed: () =>
+                                _searchLocationInIndia(_searchController.text),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.arrow_forward,
-                        color: Color(0xFFFF5252)),
-                    onPressed: () =>
-                        _searchLocationInIndia(_searchController.text),
-                  ),
-                ],
-              ),
-            ),
-          ),
 
-          // Filter Chips Row
-          Positioned(
-            top: 72,
-            left: 14,
-            right: 14,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: ['All', 'Flood', 'Fire', 'Cyclone', 'Earthquake']
-                    .map((filter) {
-                  final isSelected = _selectedFilter == filter;
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: ChoiceChip(
-                      label: Text(filter),
-                      selected: isSelected,
-                      selectedColor: const Color(0xFFFF5252),
-                      labelStyle: TextStyle(
-                        color: isSelected ? Colors.white : Colors.black87,
-                        fontWeight: FontWeight.bold,
+                if (_showRoutePanel && _isRouteMinimized)
+                  Card(
+                    elevation: 6,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.directions, color: Color(0xFFFF5252)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _destController.text.isNotEmpty
+                                  ? 'To: ${_destController.text}'
+                                  : 'Route Active',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.unfold_more, color: Colors.grey),
+                            tooltip: 'Expand Route Settings',
+                            onPressed: () {
+                              setState(() {
+                                _isRouteMinimized = false;
+                              });
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, color: Colors.red),
+                            tooltip: 'Clear Route',
+                            onPressed: () {
+                              setState(() {
+                                _routePoints.clear();
+                                _startController.clear();
+                                _destController.clear();
+                                _isRouteMinimized = false;
+                              });
+                            },
+                          ),
+                        ],
                       ),
-                      backgroundColor: Colors.white,
-                      onSelected: (bool selected) {
-                        setState(() {
-                          _selectedFilter = filter;
-                        });
-                      },
                     ),
-                  );
-                }).toList(),
-              ),
+                  ),
+
+                if (_showRoutePanel && !_isRouteMinimized)
+                  Card(
+                    elevation: 6,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextField(
+                            controller: _startController,
+                            decoration: InputDecoration(
+                              hintText: 'Start Location',
+                              prefixIcon: const Icon(Icons.my_location,
+                                  color: Colors.blue),
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.gps_fixed,
+                                    color: Colors.blueAccent),
+                                tooltip: 'Use Current Location',
+                                onPressed: () async {
+                                  if (_userLocation == null) {
+                                    await _getUserCurrentLocation();
+                                  }
+                                  if (_userLocation != null) {
+                                    setState(() {
+                                      _startController.text = 'My Location';
+                                    });
+                                  }
+                                },
+                              ),
+                              isDense: true,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          TextField(
+                            controller: _destController,
+                            decoration: const InputDecoration(
+                              hintText: 'Destination (e.g. Shimla)',
+                              prefixIcon:
+                                  Icon(Icons.location_on, color: Colors.red),
+                              isDense: true,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: _isLoading ? null : _calculateRoute,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFFF5252),
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  icon: const Icon(Icons.directions),
+                                  label: const Text('Find Route'),
+                                ),
+                              ),
+                              if (_routePoints.isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                IconButton(
+                                  icon: const Icon(Icons.unfold_less, color: Colors.grey),
+                                  tooltip: 'Minimize',
+                                  onPressed: () {
+                                    setState(() {
+                                      _isRouteMinimized = true;
+                                    });
+                                  },
+                                ),
+                              ],
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.close, color: Colors.red),
+                                tooltip: 'Clear route & search',
+                                onPressed: () {
+                                  setState(() {
+                                    _routePoints.clear();
+                                    _startController.clear();
+                                    _destController.clear();
+                                    _isRouteMinimized = false;
+                                  });
+                                },
+                              )
+                            ],
+                          )
+                        ],
+                      ),
+                    ),
+                  ),
+
+                const SizedBox(height: 8),
+
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: ['All', 'Flood', 'Fire', 'Cyclone', 'Earthquake']
+                        .map((filter) {
+                      final isSelected = _selectedFilter == filter;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6.0),
+                        child: ChoiceChip(
+                          label: Text(filter),
+                          selected: isSelected,
+                          selectedColor: const Color(0xFFFF5252),
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.white : Colors.black87,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                          backgroundColor: Colors.white,
+                          onSelected: (bool selected) {
+                            setState(() {
+                              _selectedFilter = filter;
+                            });
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
             ),
           ),
 
-          // Loading Overlay
           if (_isLoading)
             const Positioned(
-              top: 130,
+              bottom: 80,
               left: 0,
               right: 0,
               child: Center(
@@ -607,7 +856,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         SizedBox(width: 10),
-                        Text('Fetching location...'),
+                        Text('Processing request...'),
                       ],
                     ),
                   ),
@@ -617,7 +866,6 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
         ],
       ),
 
-      // My Location GPS Floating Button
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _getUserCurrentLocation,
         backgroundColor: Colors.white,

@@ -35,6 +35,7 @@ build/
 # Ignore sensitive keys across all subfolders
 **/google-services.json
 **/service-account.json
+**/application.properties
 
 # Ignore build artifacts across all subfolders
 **/build/
