@@ -47,7 +47,7 @@ app.*.map.json
 # Sensitive keys
 **/google-services.json
 **/service-account.json
-**/application.properties
+
 
 
 # Build directories
