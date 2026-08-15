@@ -8,6 +8,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/admin/alert")
+@CrossOrigin(origins = "*")
 public class AdminAlertController {
 
     private final AlertService alertService;

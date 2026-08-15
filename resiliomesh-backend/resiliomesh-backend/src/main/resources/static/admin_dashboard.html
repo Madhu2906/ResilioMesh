@@ -2,21 +2,164 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Emergency Management Admin Panel</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; background: #f1f5f9; }
-        h2 { color: #0f172a; border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
-        .card { background: white; padding: 20px; margin-bottom: 20px; border-left: 6px solid #ef4444; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-        .card h3 { margin-top: 0; color: #dc2626; }
-        .btn-dispatch { background: #16a34a; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            padding: 40px 20px; 
+            background: #f8fafc; 
+            color: #1e293b;
+        }
+
+        .dashboard-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .header-title { 
+            color: #0f172a; 
+            font-size: 1.75rem;
+            font-weight: 800;
+            padding-bottom: 16px; 
+            margin-bottom: 24px;
+            border-bottom: 2px solid #e2e8f0; 
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card { 
+            background: #ffffff; 
+            padding: 24px; 
+            margin-bottom: 20px; 
+            border-left: 6px solid #ef4444; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); 
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+
+        .alert-id {
+            font-weight: 800;
+            font-size: 1.1rem;
+            color: #0f172a;
+        }
+
+        .badge-category {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .grid-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .info-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            font-weight: 700;
+        }
+
+        .info-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .dispatch-controls {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        select, input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            outline: none;
+            background: #ffffff;
+        }
+
+        select:focus, input[type="number"]:focus {
+            border-color: #2563eb;
+        }
+
+        .btn-dispatch { 
+            background: #16a34a; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: 700; 
+            font-size: 14px; 
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.2s;
+        }
+
         .btn-dispatch:hover { background: #15803d; }
-        input[type="number"] { padding: 8px; width: 70px; border: 1px solid #cbd5e1; border-radius: 4px; font-weight: bold; }
+
+        .maps-link {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .maps-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
 
-    <h2>🚨 Real-time Emergency Distress Feed</h2>
-    <div id="alertsContainer">Fetching active alerts...</div>
+    <div class="dashboard-container">
+        <h2 class="header-title">🚨 Real-time Emergency Distress Feed</h2>
+        <div id="alertsContainer">Fetching active alerts...</div>
+    </div>
 
     <script>
         const API_BASE = "http://localhost:8080/api/admin/sos";
@@ -32,7 +175,7 @@
                 container.innerHTML = '';
 
                 if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<p style="color: #64748b;">No active emergency alerts at this moment.</p>';
+                    container.innerHTML = '<p style="color: #64748b; font-weight: 500;">No active emergency alerts at this moment.</p>';
                     return;
                 }
 
@@ -42,16 +185,60 @@
                     const card = document.createElement('div');
                     card.className = 'card';
                     card.innerHTML = `
-                        <h3>EMERGENCY CATEGORY: ${alert.category}</h3>
-                        <p><strong>Alert ID:</strong> #${alert.id}</p>
-                        <p><strong>Time Reported:</strong> ${new Date(alert.createdAt).toLocaleString()}</p>
-                        <p><strong>Coordinates:</strong> ${alert.latitude}, ${alert.longitude}</p>
-                        <p><strong>Estimated Route Time:</strong> ~${estimatedTimeMins} mins</p>
-                        <p><a href="https://www.google.com/maps?q=${alert.latitude},${alert.longitude}" target="_blank">📍 Open Location in Google Maps</a></p>
-                        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;">
-                        <label>Confirm Assistance ETA (Minutes): </label>
-                        <input type="number" id="eta_${alert.id}" value="${estimatedTimeMins}">
-                        <button class="btn-dispatch" onclick="dispatchHelp(${alert.id})">✔ Dispatch Rescue Unit</button>
+                        <div class="alert-header">
+                            <span class="alert-id">🚨 ALERT #${alert.id}</span>
+                            <span class="badge-category">${alert.category || 'GENERAL EMERGENCY'}</span>
+                        </div>
+
+                        <div class="grid-info">
+                            <div class="info-item">
+                                <span class="info-label">👤 Victim Name</span>
+                                <span class="info-value">${alert.userName || alert.name || 'John Doe'}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">📞 Contact Number</span>
+                                <span class="info-value">${alert.userPhone || alert.phone || '+91 98765 43210'}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🕒 Time Reported</span>
+                                <span class="info-value">${new Date(alert.createdAt).toLocaleString()}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">📍 Coordinates</span>
+                                <span class="info-value">${alert.latitude}, ${alert.longitude}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🧭 Route Est.</span>
+                                <span class="info-value">~${estimatedTimeMins} mins</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🗺️ Navigation</span>
+                                <span class="info-value">
+                                    <a href="https://www.google.com/maps?q=${alert.latitude},${alert.longitude}" target="_blank" class="maps-link">Open in Maps ↗</a>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="dispatch-controls">
+                            <div class="control-group">
+                                <label class="info-label" for="dept_${alert.id}">Department:</label>
+                                <select id="dept_${alert.id}">
+                                    <option value="MEDICAL">🚑 Medical & Ambulance</option>
+                                    <option value="FIRE">🚒 Fire & Rescue Team</option>
+                                    <option value="POLICE">🚓 Police Department</option>
+                                    <option value="DISASTER_MGMT">⚠️ Disaster Response Unit</option>
+                                </select>
+                            </div>
+
+                            <div class="control-group">
+                                <label class="info-label" for="eta_${alert.id}">ETA (Mins):</label>
+                                <input type="number" id="eta_${alert.id}" value="${estimatedTimeMins}" min="1" style="width: 70px;">
+                            </div>
+
+                            <button class="btn-dispatch" onclick="dispatchHelp(${alert.id})">
+                                ✔ Dispatch Rescue Unit
+                            </button>
+                        </div>
                     `;
                     container.appendChild(card);
                 });
@@ -75,14 +262,19 @@
 
         async function dispatchHelp(alertId) {
             const etaMinutes = document.getElementById(`eta_${alertId}`).value;
+            const department = document.getElementById(`dept_${alertId}`).value;
             
-            const response = await fetch(`${API_BASE}/accept/${alertId}?etaMinutes=${etaMinutes}`, {
-                method: 'POST'
-            });
+            try {
+                const response = await fetch(`${API_BASE}/accept/${alertId}?etaMinutes=${etaMinutes}&department=${department}`, {
+                    method: 'POST'
+                });
 
-            if (response.ok) {
-                alert(`Dispatch confirmed! ETA of ${etaMinutes} mins assigned.`);
-                fetchActiveAlerts();
+                if (response.ok) {
+                    alert(`✓ Rescue Unit from [${department}] dispatched successfully with ETA of ${etaMinutes} mins!`);
+                    fetchActiveAlerts();
+                }
+            } catch (err) {
+                console.error("Failed to dispatch help:", err);
             }
         }
 
