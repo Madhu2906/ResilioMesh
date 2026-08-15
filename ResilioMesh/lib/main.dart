@@ -1,5 +1,6 @@
 //  https://13jr54g7-8080.inc1.devtunnels.ms/api/users/update-device
 
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,23 +10,24 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:torch_light/torch_light.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'dart:convert';
+import 'package:url_launcher/url_launcher.dart';
+
+// Internal App Imports
 import 'privacy_policy_screen.dart';
 import 'news_detail_screen.dart';
 import 'notification_store.dart';
 import 'notifications_screen.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'sos_screen.dart';
 import 'emergency_contacts_screen.dart';
 import 'safety_tips_screen.dart';
 import 'disaster_map_screen.dart';
 import 'disaster_details_screen.dart';
 import 'about_us_screen.dart';
-import 'dart:convert';
 import 'live_weather_screen.dart';
 import 'login_screen.dart';
 import 'auth_service.dart';
 import 'profile_screen.dart';
+import 'services/location_service.dart';
 
 // Global Navigation Key to handle notification taps anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -273,8 +275,7 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
 
   Future<void> _sendTokenAndLocationToBackend(
       String token, double lat, double lon) async {
-   
-        final url = Uri.parse('http://10.120.159.213:8080/api/users/update-device');
+    final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms//api/users/update-device');
 
     try {
       await http.post(
@@ -546,6 +547,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // 🚀 Automatically sync device location & FCM token upon opening home screen
+    LocationService.syncUserLocationAndToken();
+  }
+
   final List<Widget> _pages = [
     const DashboardContent(),
     const DisasterMapScreen(),
@@ -732,9 +740,8 @@ class DashboardContent extends StatelessWidget {
                       DashboardItem(
                         icon: Icons.wb_sunny_outlined,
                         label: 'Live\nWeather',
-                        iconColor: Color(0xFFFF9800),
+                        iconColor: const Color(0xFFFF9800),
                         onTap: () {
-                          // Navigates to the Live Weather screen when the dashboard card is clicked
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (context) => const LiveWeatherScreen(),
@@ -745,7 +752,7 @@ class DashboardContent extends StatelessWidget {
                       DashboardItem(
                         icon: Icons.grain_outlined,
                         label: 'IMD\nForecast',
-                        iconColor: Color(0xFF9C27B0),
+                        iconColor: const Color(0xFF9C27B0),
                       ),
                       DashboardItem(
                         icon: Icons.phone_in_talk_outlined,
@@ -761,11 +768,10 @@ class DashboardContent extends StatelessWidget {
                           );
                         },
                       ),
-
                       DashboardItem(
                         icon: Icons.add_moderator_outlined,
                         label: 'Safety\nTips',
-                        iconColor: Color(0xFF4CAF50),
+                        iconColor: const Color(0xFF4CAF50),
                         onTap: () {
                           Navigator.push(
                             context,
@@ -778,7 +784,7 @@ class DashboardContent extends StatelessWidget {
                       DashboardItem(
                         icon: Icons.assignment_outlined,
                         label: "Do's /\nDon't",
-                        iconColor: Color(0xFF673AB7),
+                        iconColor: const Color(0xFF673AB7),
                         onTap: () {
                           Navigator.push(
                             context,
@@ -893,9 +899,16 @@ class AppDrawer extends StatelessWidget {
             Navigator.pop(context);
             Navigator.of(
               context,
-            ).push(MaterialPageRoute(builder: (context) => AboutUsScreen()));
+            ).push(MaterialPageRoute(builder: (context) => const AboutUsScreen()));
           }),
-          _buildDrawerTile(Icons.notifications_none_rounded, 'Alert', () {}),
+          _buildDrawerTile(Icons.notifications_none_rounded, 'Alert', () {
+            Navigator.pop(context);
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const NotificationsScreen(),
+              ),
+            );
+          }),
           _buildDrawerTile(Icons.privacy_tip_outlined, 'Privacy Policy', () {
             Navigator.pop(context);
             Navigator.of(context).push(
@@ -931,7 +944,7 @@ class AppDrawer extends StatelessWidget {
     );
   }
 
-Widget _buildDrawerTile(
+  Widget _buildDrawerTile(
     IconData icon,
     String title,
     VoidCallback onTap, {
@@ -953,8 +966,46 @@ Widget _buildDrawerTile(
     );
   }
 }
+
 // ==========================================
-// LIVE WEATHER SCREEN (Cities + Nearby Locations)
+// DO'S / DON'TS SCREEN
+// ==========================================
+class DosDontsScreen extends StatelessWidget {
+  const DosDontsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Do's & Don'ts"),
+        backgroundColor: const Color(0xFFFF5252),
+        foregroundColor: Colors.white,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16.0),
+        children: const [
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.check_circle_outline, color: Colors.green),
+              title: Text("DO: Keep Emergency Supplies Ready"),
+              subtitle: Text("Pack water, non-perishable food, flashlight, and medical kits."),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.cancel_outlined, color: Colors.red),
+              title: Text("DON'T: Panic or Spread Unverified News"),
+              subtitle: Text("Follow official announcements from disaster management authorities only."),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// LIVE WEATHER SCREEN
 // ==========================================
 class LiveWeatherScreen extends StatefulWidget {
   const LiveWeatherScreen({super.key});
@@ -964,12 +1015,10 @@ class LiveWeatherScreen extends StatefulWidget {
 }
 
 class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
-  // Red & White Theme Colors
   static const Color primaryRed = Color(0xFFD32F2F);
   static const Color lightRedBg = Color(0xFFFFEBEE);
   static const Color cardBorderColor = Color(0xFFE0E0E0);
 
-  // 25 Dynamic Locations combining Major Cities & Nearby Localities/Wards
   final List<String> _indiaLocations = [
     'Mumbai - Kurla West',
     'Mumbai - Bandra East',
@@ -1014,7 +1063,6 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
     'rain24hr': '4.1mm',
   };
 
-  // GPS Live Location Fetcher
   Future<void> _requestUserLiveLocation() async {
     setState(() => _isLoading = true);
 
@@ -1112,7 +1160,6 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // Header Curve Container with Red Theme
             Container(
               width: double.infinity,
               padding: const EdgeInsets.only(bottom: 20),
@@ -1126,7 +1173,6 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
               child: Column(
                 children: [
                   const SizedBox(height: 10),
-                  // Clickable Live Weather Card Header triggering GPS
                   GestureDetector(
                     onTap: _requestUserLiveLocation,
                     child: Container(
@@ -1157,16 +1203,12 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 12),
-
-            // Content Padding
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Dropdown Selection (Cities + Nearby Locations)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                     decoration: BoxDecoration(
@@ -1198,10 +1240,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 10),
-
-                  // Weather Station Box
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
@@ -1224,10 +1263,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 14),
-
-                  // Header row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
@@ -1235,10 +1271,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                       Text('View on Map', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: primaryRed)),
                     ],
                   ),
-
                   const SizedBox(height: 8),
-
-                  // Data Metrics Section
                   Stack(
                     children: [
                       Container(
@@ -1273,16 +1306,11 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                         ),
                     ],
                   ),
-
                   const SizedBox(height: 16),
-
                   const Center(
                     child: Text('Rainfall (Most Recent)', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.black54)),
                   ),
-
                   const SizedBox(height: 8),
-
-                  // Rainfall Intervals
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
                     decoration: BoxDecoration(

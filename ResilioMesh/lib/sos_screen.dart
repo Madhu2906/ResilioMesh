@@ -385,7 +385,7 @@ class _SosScreenState extends State<SosScreen> {
         categoryPayload = "OTHER: ${_customCategoryController.text.trim()}";
       }
 
-      final url = Uri.parse('http://10.120.159.213:8080/api/admin/sos/trigger');
+      final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/trigger');
 
       final response = await http
           .post(
@@ -446,7 +446,7 @@ class _SosScreenState extends State<SosScreen> {
     _pollTimer?.cancel();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
       try {
-        final url = Uri.parse('http://10.120.159.213:8080/api/admin/sos/status/$alertId');
+        final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/status/$alertId');
         final response = await http.get(url);
 
         if (response.statusCode == 200) {
