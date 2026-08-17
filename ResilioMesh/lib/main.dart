@@ -275,12 +275,15 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
 
   Future<void> _sendTokenAndLocationToBackend(
       String token, double lat, double lon) async {
-    final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms//api/users/update-device');
+    final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/users/update-device');
 
     try {
       await http.post(
         url,
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'bypass-tunnel-reminder': 'true', // 👈 BYPASS DEV TUNNEL INTERSTITIAL PAGE
+        },
         body: jsonEncode({
           'fcmToken': token,
           'latitude': lat,
@@ -967,42 +970,7 @@ class AppDrawer extends StatelessWidget {
   }
 }
 
-// ==========================================
-// DO'S / DON'TS SCREEN
-// ==========================================
-class DosDontsScreen extends StatelessWidget {
-  const DosDontsScreen({super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Do's & Don'ts"),
-        backgroundColor: const Color(0xFFFF5252),
-        foregroundColor: Colors.white,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16.0),
-        children: const [
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.check_circle_outline, color: Colors.green),
-              title: Text("DO: Keep Emergency Supplies Ready"),
-              subtitle: Text("Pack water, non-perishable food, flashlight, and medical kits."),
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: Icon(Icons.cancel_outlined, color: Colors.red),
-              title: Text("DON'T: Panic or Spread Unverified News"),
-              subtitle: Text("Follow official announcements from disaster management authorities only."),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ==========================================
 // LIVE WEATHER SCREEN
@@ -1028,23 +996,10 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
     'New Delhi - Dwarka',
     'Bengaluru - Indiranagar',
     'Bengaluru - Whitefield',
-    'Kolkata - Salt Lake',
     'Kolkata - Park Street',
     'Chennai - T. Nagar',
-    'Chennai - Velachery',
     'Hyderabad - Banjara Hills',
-    'Hyderabad - Hitec City',
-    'Ahmedabad - Satellite',
     'Pune - Koregaon Park',
-    'Pune - Hinjewadi',
-    'Jaipur - Malviya Nagar',
-    'Lucknow - Hazratganj',
-    'Nagpur - Civil Lines',
-    'Indore - Vijay Nagar',
-    'Patna - Boring Road',
-    'Bhopal - MP Nagar',
-    'Visakhapatnam - Beach Road',
-    'Srinagar - Lal Chowk',
   ];
 
   String _selectedLocation = 'Mumbai - Kurla West';

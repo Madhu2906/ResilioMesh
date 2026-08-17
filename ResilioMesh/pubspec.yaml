@@ -45,6 +45,7 @@ dependencies:
   telephony: ^0.2.0
   flutter_contacts: ^1.1.8
   permission_handler: ^11.3.1
+  speech_to_text: ^7.0.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -52,6 +53,7 @@ dependencies:
   torch_light: ^1.0.0
   audioplayers: ^6.8.1
   just_audio: ^0.9.36
+  
   
   
 

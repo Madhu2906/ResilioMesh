@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:telephony/telephony.dart';
 import 'emergency_sms_contacts_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 // Top-level entry point required by Telephony package for background processing
 // Top-level background function called when an SMS arrives on the receiver's phone
@@ -30,7 +31,7 @@ void backGroundSmsHandler(SmsMessage message) async {
     // 2. Play the siren audio in background
     try {
       final AudioPlayer backgroundPlayer = AudioPlayer();
-      await backgroundPlayer.setAudioContext( AudioContext(
+      await backgroundPlayer.setAudioContext(AudioContext(
         android: AudioContextAndroid(
           stayAwake: true,
           usageType: AndroidUsageType.alarm,
@@ -73,6 +74,11 @@ class _SosScreenState extends State<SosScreen> {
 
   final Telephony _telephony = Telephony.instance;
 
+  // --- Voice Dictation State ---
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
+  String _dictatedText = "";
+
   final List<Map<String, dynamic>> _categories = [
     {'label': 'General', 'icon': Icons.warning_amber_rounded, 'code': 'GENERAL'},
     {'label': 'Medical', 'icon': Icons.local_hospital_rounded, 'code': 'MEDICAL'},
@@ -85,6 +91,7 @@ class _SosScreenState extends State<SosScreen> {
   void initState() {
     super.initState();
 
+    _speech = stt.SpeechToText();
     _initAudioPlayer();
     _initIncomingSmsListener();
 
@@ -105,7 +112,7 @@ class _SosScreenState extends State<SosScreen> {
   // Pre-configure audio context so alarm audio plays at maximum device alarm volume stream
   Future<void> _initAudioPlayer() async {
     try {
-      await _audioPlayer.setAudioContext( AudioContext(
+      await _audioPlayer.setAudioContext(AudioContext(
         android: AudioContextAndroid(
           stayAwake: true,
           usageType: AndroidUsageType.alarm,
@@ -115,6 +122,43 @@ class _SosScreenState extends State<SosScreen> {
       ));
     } catch (e) {
       debugPrint("Audio Context Setup Error: $e");
+    }
+  }
+
+  // Handle Speech-to-Text Dictation Toggle
+  Future<void> _toggleDictation() async {
+    if (_sosTriggered || _isSending) return;
+
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (status) {
+          if (status == 'done' || status == 'notListening') {
+            if (mounted) setState(() => _isListening = false);
+          }
+        },
+        onError: (error) {
+          if (mounted) setState(() => _isListening = false);
+        },
+      );
+
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(
+          onResult: (result) {
+            if (mounted) {
+              setState(() {
+                _dictatedText = result.recognizedWords;
+                if (_selectedCategory == 'OTHER') {
+                  _customCategoryController.text = _dictatedText;
+                }
+              });
+            }
+          },
+        );
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
     }
   }
 
@@ -161,6 +205,7 @@ class _SosScreenState extends State<SosScreen> {
       Permission.sms,
       Permission.phone,
       Permission.camera,
+      Permission.microphone,
     ].request();
 
     if (statuses[Permission.sms]?.isGranted == true) {
@@ -200,6 +245,7 @@ class _SosScreenState extends State<SosScreen> {
     _cancelTimer();
     _pollTimer?.cancel();
     _stopHardwareAlert();
+    _speech.stop();
     _customCategoryController.dispose();
     _audioPlayer.dispose();
     super.dispose();
@@ -214,8 +260,7 @@ class _SosScreenState extends State<SosScreen> {
       await _audioPlayer.stop();
       await _audioPlayer.setReleaseMode(ReleaseMode.loop);
       await _audioPlayer.setVolume(1.0);
-      
-      // AssetSource automatically prefixes 'assets/'
+
       try {
         await _audioPlayer.play(AssetSource('siren.mp3'));
       } catch (_) {
@@ -366,6 +411,12 @@ class _SosScreenState extends State<SosScreen> {
       _isSending = true;
     });
 
+    // Stop listening if currently active
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
+    }
+
     // 1. Immediately fire siren & torch upon SOS trigger
     await _startHardwareAlert();
 
@@ -376,14 +427,46 @@ class _SosScreenState extends State<SosScreen> {
         return;
       }
 
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        ).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () async {
+            return await Geolocator.getLastKnownPosition() ??
+                Position(
+                  latitude: 19.0760,
+                  longitude: 72.8777,
+                  timestamp: DateTime.now(),
+                  accuracy: 0,
+                  altitude: 0,
+                  heading: 0,
+                  speed: 0,
+                  speedAccuracy: 0,
+                  altitudeAccuracy: 0,
+                  headingAccuracy: 0,
+                );
+          },
+        );
+      } catch (e) {
+        debugPrint("Location resolution warning: $e");
+      }
 
       String categoryPayload = _selectedCategory;
       if (_selectedCategory == 'OTHER' && _customCategoryController.text.trim().isNotEmpty) {
         categoryPayload = "OTHER: ${_customCategoryController.text.trim()}";
       }
+
+      // Append voice dictation text if captured
+      if (_dictatedText.trim().isNotEmpty) {
+        categoryPayload += " | Dictation: ${_dictatedText.trim()}";
+      }
+
+      String? fcmToken;
+      try {
+        fcmToken = await FirebaseMessaging.instance.getToken();
+      } catch (_) {}
 
       final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/trigger');
 
@@ -392,17 +475,18 @@ class _SosScreenState extends State<SosScreen> {
             url,
             headers: {
               'Content-Type': 'application/json',
+              'bypass-tunnel-reminder': 'true',
               'X-Tunnel-Skip-Anti-Phishing-Page': 'true',
             },
             body: jsonEncode({
-              'latitude': position.latitude,
-              'longitude': position.longitude,
+              'latitude': position?.latitude ?? 19.0760,
+              'longitude': position?.longitude ?? 72.8777,
               'category': categoryPayload,
-              'fcmToken': 'sample_token',
+              'fcmToken': fcmToken ?? 'sample_token',
               'timestamp': DateTime.now().toIso8601String(),
             }),
           )
-          .timeout(const Duration(seconds: 8));
+          .timeout(const Duration(seconds: 10));
 
       if (!mounted) return;
 
@@ -447,7 +531,13 @@ class _SosScreenState extends State<SosScreen> {
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
       try {
         final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/status/$alertId');
-        final response = await http.get(url);
+        final response = await http.get(
+          url,
+          headers: {
+            'bypass-tunnel-reminder': 'true',
+            'X-Tunnel-Skip-Anti-Phishing-Page': 'true',
+          },
+        );
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -468,9 +558,7 @@ class _SosScreenState extends State<SosScreen> {
   }
 
   Future<void> _sendEmergencySms() async {
-    // Start hardware alert immediately when manual SMS is triggered
-    await _startHardwareAlert();
-
+    // Hardware alert call removed from sender side so siren/torch only trigger on receiver phone upon SMS arrival
     try {
       final prefs = await SharedPreferences.getInstance();
       List<String> contacts = prefs.getStringList('emergency_contacts') ?? [];
@@ -490,17 +578,43 @@ class _SosScreenState extends State<SosScreen> {
       final bool hasPermission = await _handleLocationPermission();
       if (!hasPermission) return;
 
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        ).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () async {
+            return await Geolocator.getLastKnownPosition() ??
+                Position(
+                  latitude: 19.0760,
+                  longitude: 72.8777,
+                  timestamp: DateTime.now(),
+                  accuracy: 0,
+                  altitude: 0,
+                  heading: 0,
+                  speed: 0,
+                  speedAccuracy: 0,
+                  altitudeAccuracy: 0,
+                  headingAccuracy: 0,
+                );
+          },
+        );
+      } catch (_) {}
 
       String categoryText = _selectedCategory;
       if (_selectedCategory == 'OTHER' && _customCategoryController.text.trim().isNotEmpty) {
         categoryText = "OTHER (${_customCategoryController.text.trim()})";
       }
 
-      final String mapsLink =
-          "https://maps.google.com/?q=${position.latitude},${position.longitude}";
+      if (_dictatedText.trim().isNotEmpty) {
+        categoryText += " | Dictation: ${_dictatedText.trim()}";
+      }
+
+      final double lat = position?.latitude ?? 19.0760;
+      final double lon = position?.longitude ?? 72.8777;
+
+      final String mapsLink = "https://maps.google.com/?q=$lat,$lon";
       final String message =
           "EMERGENCY ALERT ($categoryText)! I need immediate help. Live Location: $mapsLink";
 
@@ -600,6 +714,8 @@ class _SosScreenState extends State<SosScreen> {
       _activeAlertId = null;
       _etaMinutes = 0;
       _selectedCategory = 'GENERAL';
+      _dictatedText = "";
+      _isListening = false;
     });
   }
 
@@ -749,6 +865,60 @@ class _SosScreenState extends State<SosScreen> {
                   ),
                 ),
               ],
+
+              const SizedBox(height: 16),
+
+              // Voice Dictation Box
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _isListening ? Colors.red.shade50 : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade300,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                        color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade700,
+                        size: 26,
+                      ),
+                      onPressed: (_sosTriggered || _isSending) ? null : _toggleDictation,
+                    ),
+                    Expanded(
+                      child: Text(
+                        _isListening
+                            ? "Listening... Speak emergency details."
+                            : (_dictatedText.isNotEmpty
+                                ? "\"$_dictatedText\""
+                                : "Tap mic to dictate details by voice"),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade700,
+                          fontWeight: _isListening ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    if (_dictatedText.isNotEmpty && !_isListening)
+                      IconButton(
+                        icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
+                        onPressed: (_sosTriggered || _isSending)
+                            ? null
+                            : () {
+                                setState(() {
+                                  _dictatedText = "";
+                                  if (_selectedCategory == 'OTHER') {
+                                    _customCategoryController.clear();
+                                  }
+                                });
+                              },
+                      ),
+                  ],
+                ),
+              ),
 
               const SizedBox(height: 30),
 
