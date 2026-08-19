@@ -52,19 +52,45 @@ FINAL_PROJECT_2026/
                 └── admin_dashboard.html # Web Dispatcher Dashboard
 
 
-🛠️ Technology StackLayerTechnologies UsedMobile FrontendFlutter, DartBackend FrameworkJava 17+, Spring Boot, Spring Data JPADatabase & ManagementPostgreSQL, pgAdminPush NotificationsFirebase Cloud Messaging (FCM)Web Admin InterfaceHTML5, JavaScript, CSS3🚀 Setup & InstallationPrerequisitesFlutter SDK (v3.0+)JDK 17 or higherPostgreSQL Server & pgAdminMaven (wrapper included)1. Database Configuration (PostgreSQL & pgAdmin)Open pgAdmin and create a new database named resiliomesh_db.Configure your database credentials inside resiliomesh-backend/resiliomesh-backend/src/main/resources/application.properties:Propertiesspring.datasource.url=jdbc:postgresql://localhost:5432/resiliomesh_db
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technologies Used |
+| :--- | :--- |
+| **Mobile Frontend** | Flutter, Dart |
+| **Backend Framework** | Java 17+, Spring Boot, Spring Data JPA |
+| **Database & Management** | PostgreSQL, pgAdmin |
+| **Push Notifications** | Firebase Cloud Messaging (FCM) |
+| **Web Admin Interface** | HTML5, JavaScript, CSS3 |
+
+---
+
+## 🚀 Setup & Installation
+
+### Prerequisites
+* **Flutter SDK** (v3.0+)
+* **JDK 17** or higher
+* **PostgreSQL Server & pgAdmin**
+* **Maven** (wrapper included)
+
+---
+
+### 1. Database Configuration (PostgreSQL & pgAdmin)
+
+1. Open **pgAdmin** and create a new database named `resiliomesh_db`.
+2. Configure your database credentials inside `resiliomesh-backend/resiliomesh-backend/src/main/resources/application.properties`:
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/resiliomesh_db
 spring.datasource.username=YOUR_POSTGRES_USERNAME
 spring.datasource.password=YOUR_POSTGRES_PASSWORD
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
-2. Backend Service SetupNavigate to the backend module:Bashcd resiliomesh-backend/resiliomesh-backend
-Run the Spring Boot application using the Maven wrapper:Bash# On Linux/macOS
-./mvnw spring-boot:run
 
-# On Windows PowerShell
-.\mvnw.cmd spring-boot:run
-API Base URL: http://localhost:8080Admin Control Panel: http://localhost:8080/admin_dashboard.html3. Mobile App SetupNavigate to the Flutter project directory:Bashcd ResilioMesh
-Configure your server IP address inside lib/config/api_config.dart:Dartconst String baseUrl = "http://<YOUR_LOCAL_IP>:8080";
-Install dependencies and launch the app:Bashflutter pub get
-flutter run
-📄 LicenseDistributed under the MIT License. See LICENSE for more information.          
+
+2. Backend Service Setup
+Navigate to the backend module:
+
+Bash
+cd resiliomesh-backend/resiliomesh-backend
