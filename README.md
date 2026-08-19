@@ -51,7 +51,7 @@ FINAL_PROJECT_2026/
             └── static/
                 └── admin_dashboard.html # Web Dispatcher Dashboard
 
-
+```
 ---
 
 ## 🛠️ Technology Stack
@@ -87,10 +87,12 @@ spring.datasource.username=YOUR_POSTGRES_USERNAME
 spring.datasource.password=YOUR_POSTGRES_PASSWORD
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
-
+```
 
 2. Backend Service Setup
 Navigate to the backend module:
 
+```
 Bash
 cd resiliomesh-backend/resiliomesh-backend
+```
