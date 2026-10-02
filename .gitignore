@@ -1,0 +1,6 @@
+.env
+.env.*
+!.env.example
+**/service-account.json
+**/firebase-service-account*.json
+**/application-local.properties

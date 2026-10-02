@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emergency Management Admin Panel</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            padding: 40px 20px; 
+            background: #f8fafc; 
+            color: #1e293b;
+        }
+
+        .dashboard-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .header-title { 
+            color: #0f172a; 
+            font-size: 1.75rem;
+            font-weight: 800;
+            padding-bottom: 16px; 
+            margin-bottom: 24px;
+            border-bottom: 2px solid #e2e8f0; 
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card { 
+            background: #ffffff; 
+            padding: 24px; 
+            margin-bottom: 20px; 
+            border-left: 6px solid #ef4444; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); 
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .card:hover {
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+        }
+
+        .alert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+
+        .alert-id {
+            font-weight: 800;
+            font-size: 1.1rem;
+            color: #0f172a;
+        }
+
+        .badge-category {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .grid-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .info-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #64748b;
+            font-weight: 700;
+        }
+
+        .info-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .dispatch-controls {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        select, input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            outline: none;
+            background: #ffffff;
+        }
+
+        select:focus, input[type="number"]:focus {
+            border-color: #2563eb;
+        }
+
+        .btn-dispatch { 
+            background: #16a34a; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-weight: 700; 
+            font-size: 14px; 
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.2s;
+        }
+
+        .btn-dispatch:hover { background: #15803d; }
+
+        .maps-link {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .maps-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-container">
+        <h2 class="header-title">🚨 Real-time Emergency Distress Feed</h2>
+        <form id="adminLogin" style="display:flex;gap:8px;align-items:center;margin:12px 0;">
+            <input id="adminEmail" type="email" placeholder="Admin email" required>
+            <input id="adminPassword" type="password" placeholder="Password" required>
+            <button type="submit">Sign in</button>
+            <button id="adminLogout" type="button" hidden>Sign out</button>
+            <span id="authMessage" role="status"></span>
+        </form>
+        <div id="alertsContainer">Sign in with an administrator account to view alerts.</div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+        const firebaseApp = initializeApp({
+            apiKey: "AIzaSyAL4bAxsQwA4LcEvb4HATFYnmf88dc_tNI",
+            authDomain: "resiliomesh-b524f.firebaseapp.com",
+            projectId: "resiliomesh-b524f",
+            storageBucket: "resiliomesh-b524f.firebasestorage.app",
+            messagingSenderId: "63163533599",
+        });
+        const auth = getAuth(firebaseApp);
+        let adminIdToken = null;
+        const API_BASE = `${location.origin}/api/admin/sos`;
+        const ADMIN_LAT = 19.0760; 
+        const ADMIN_LON = 72.8777;
+
+        document.getElementById('adminLogin').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const message = document.getElementById('authMessage');
+            try {
+                const credential = await signInWithEmailAndPassword(auth,
+                    document.getElementById('adminEmail').value,
+                    document.getElementById('adminPassword').value);
+                adminIdToken = await credential.user.getIdToken(true);
+                document.getElementById('adminLogout').hidden = false;
+                message.textContent = 'Signed in. Loading alerts…';
+                await fetchActiveAlerts();
+                setInterval(fetchActiveAlerts, 4000);
+            } catch (error) { message.textContent = `Sign-in failed: ${error.message}`; }
+        });
+        document.getElementById('adminLogout').addEventListener('click', async () => {
+            await signOut(auth); adminIdToken = null;
+            document.getElementById('adminLogout').hidden = true;
+            document.getElementById('alertsContainer').textContent = 'Signed out.';
+        });
+
+        async function fetchActiveAlerts() {
+            try {
+                if (!adminIdToken) return;
+                adminIdToken = await auth.currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/active`, { headers: { Authorization: `Bearer ${adminIdToken}` } });
+                if (!response.ok) throw new Error(`Request failed (${response.status})`);
+                const alerts = await response.json();
+                
+                const container = document.getElementById('alertsContainer');
+                container.innerHTML = '';
+
+                if (!alerts || alerts.length === 0) {
+                    container.innerHTML = '<p style="color: #64748b; font-weight: 500;">No active emergency alerts at this moment.</p>';
+                    return;
+                }
+
+                alerts.forEach(alert => {
+                    const estimatedTimeMins = calculateEstimatedTravelTime(ADMIN_LAT, ADMIN_LON, alert.latitude, alert.longitude);
+
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.innerHTML = `
+                        <div class="alert-header">
+                            <span class="alert-id">🚨 ALERT #${alert.id}</span>
+                            <span class="badge-category"></span>
+                        </div>
+
+                        <div class="grid-info">
+                            <div class="info-item">
+                                <span class="info-label">👤 Victim Name</span>
+                                <span class="info-value" data-field="victim"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">📞 Contact Number</span>
+                                <span class="info-value" data-field="phone"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🕒 Time Reported</span>
+                                <span class="info-value" data-field="reported"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">📍 Coordinates</span>
+                                <span class="info-value" data-field="coordinates"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🧭 Route Est.</span>
+                                <span class="info-value" data-field="eta"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">🗺️ Navigation</span>
+                                <span class="info-value">
+                                    <a href="https://www.google.com/maps?q=${alert.latitude},${alert.longitude}" target="_blank" class="maps-link">Open in Maps ↗</a>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="dispatch-controls">
+                            <div class="control-group">
+                                <label class="info-label" for="dept_${alert.id}">Department:</label>
+                                <select id="dept_${alert.id}">
+                                    <option value="MEDICAL">🚑 Medical & Ambulance</option>
+                                    <option value="FIRE">🚒 Fire & Rescue Team</option>
+                                    <option value="POLICE">🚓 Police Department</option>
+                                    <option value="DISASTER_MGMT">⚠️ Disaster Response Unit</option>
+                                </select>
+                            </div>
+
+                            <div class="control-group">
+                                <label class="info-label" for="eta_${alert.id}">ETA (Mins):</label>
+                                <input type="number" id="eta_${alert.id}" value="${estimatedTimeMins}" min="1" style="width: 70px;">
+                            </div>
+
+                            <button class="btn-dispatch" onclick="dispatchHelp(${alert.id})">
+                                ✔ Dispatch Rescue Unit
+                            </button>
+                        </div>
+                    `;
+                    card.querySelector('.badge-category').textContent = alert.category || 'GENERAL EMERGENCY';
+                    card.querySelector('[data-field="victim"]').textContent = alert.userName || alert.name || 'Unavailable';
+                    card.querySelector('[data-field="phone"]').textContent = alert.userPhone || alert.phone || 'Unavailable';
+                    card.querySelector('[data-field="reported"]').textContent = new Date(alert.createdAt).toLocaleString();
+                    if (alert.latitude == null || alert.longitude == null) {
+                        card.querySelector('[data-field="coordinates"]').textContent = 'Location unavailable';
+                        card.querySelector('[data-field="eta"]').textContent = 'Unavailable';
+                        card.querySelector('.maps-link').removeAttribute('href');
+                        card.querySelector('.maps-link').textContent = 'Location unavailable';
+                    } else {
+                        card.querySelector('[data-field="coordinates"]').textContent = `${alert.latitude}, ${alert.longitude}`;
+                        card.querySelector('[data-field="eta"]').textContent = `~${estimatedTimeMins} mins`;
+                    }
+                    container.appendChild(card);
+                });
+            } catch (err) {
+                console.error("Error fetching alerts:", err);
+            }
+        }
+
+        function calculateEstimatedTravelTime(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            const distanceKm = R * c;
+            
+            return Math.max(5, Math.ceil(distanceKm * 2) + 3); 
+        }
+
+        async function dispatchHelp(alertId) {
+            const etaMinutes = document.getElementById(`eta_${alertId}`).value;
+            const department = document.getElementById(`dept_${alertId}`).value;
+            
+            try {
+                adminIdToken = await auth.currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/accept/${alertId}?etaMinutes=${etaMinutes}&department=${department}`, {
+                    method: 'POST', headers: { Authorization: `Bearer ${adminIdToken}` }
+                });
+
+                if (response.ok) {
+                    alert(`✓ Rescue Unit from [${department}] dispatched successfully with ETA of ${etaMinutes} mins!`);
+                    fetchActiveAlerts();
+                }
+            } catch (err) {
+                console.error("Failed to dispatch help:", err);
+            }
+        }
+
+        window.dispatchHelp = dispatchHelp;
+    </script>
+</body>
+</html>

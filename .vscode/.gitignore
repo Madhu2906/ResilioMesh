@@ -1,0 +1,19 @@
+# Flutter & Firebase secrets
+**/android/app/google-services.json
+**/ios/Runner/GoogleService-Info.plist
+**/lib/firebase_options.dart
+
+# Backend & JSON keys
+service-account.json
+**/service-account.json
+*.json
+
+# Environment & Properties
+*.env
+application.properties
+application.yml
+
+# Build outputs
+**/build/
+**/target/
+**/.dart_tool/

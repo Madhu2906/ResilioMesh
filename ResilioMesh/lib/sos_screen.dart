@@ -1,0 +1,1135 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:torch_light/torch_light.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:telephony/telephony.dart';
+import 'emergency_sms_contacts_screen.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
+
+// Top-level entry point required by Telephony package for background processing
+// Top-level background function called when an SMS arrives on the receiver's phone
+@pragma('vm:entry-point')
+void backGroundSmsHandler(SmsMessage message) async {
+  String body = message.body?.toUpperCase() ?? "";
+  debugPrint("🚨 Background SMS Received on Receiver Device: $body");
+
+  if (body.contains("EMERGENCY") || body.contains("SOS")) {
+    // 1. Turn on the flashlight
+    try {
+      await TorchLight.enableTorch();
+    } catch (e) {
+      debugPrint("Background Torch Error: $e");
+    }
+
+    // 2. Play the siren audio in background
+    try {
+      final AudioPlayer backgroundPlayer = AudioPlayer();
+      await backgroundPlayer.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          stayAwake: true,
+          usageType: AndroidUsageType.alarm,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.gainTransient,
+        ),
+      ));
+      await backgroundPlayer.setReleaseMode(ReleaseMode.loop);
+      await backgroundPlayer.setVolume(1.0);
+      await backgroundPlayer.play(AssetSource('siren.mp3'));
+    } catch (e) {
+      debugPrint("Background Siren Error: $e");
+    }
+  }
+}
+
+class SosScreen extends StatefulWidget {
+  const SosScreen({super.key});
+
+  @override
+  State<SosScreen> createState() => _SosScreenState();
+}
+
+class _SosScreenState extends State<SosScreen> {
+  Timer? _countdownTimer;
+  int _secondsRemaining = 3;
+  bool _isSending = false;
+  bool _sosTriggered = false;
+  String _selectedCategory = 'GENERAL';
+
+  final TextEditingController _customCategoryController = TextEditingController();
+
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isHardwareActive = false;
+
+  int? _activeAlertId;
+  bool _isAccepted = false;
+  int _etaMinutes = 0;
+  Timer? _pollTimer;
+
+  final Telephony _telephony = Telephony.instance;
+
+  // --- Voice Dictation State ---
+  late stt.SpeechToText _speech;
+  bool _isListening = false;
+  String _dictatedText = "";
+
+  final List<Map<String, dynamic>> _categories = [
+    {'label': 'General', 'icon': Icons.warning_amber_rounded, 'code': 'GENERAL'},
+    {'label': 'Medical', 'icon': Icons.local_hospital_rounded, 'code': 'MEDICAL'},
+    {'label': 'Fire', 'icon': Icons.local_fire_department_rounded, 'code': 'FIRE'},
+    {'label': 'Trapped', 'icon': Icons.minor_crash_rounded, 'code': 'TRAPPED'},
+    {'label': 'Other', 'icon': Icons.edit_note_rounded, 'code': 'OTHER'},
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    _speech = stt.SpeechToText();
+    _initAudioPlayer();
+    _initIncomingSmsListener();
+
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      if (message.data['type'] == 'ETA_UPDATE') {
+        final eta = int.tryParse(message.data['etaMinutes'] ?? '15') ?? 15;
+        _pollTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _isAccepted = true;
+            _etaMinutes = eta;
+          });
+        }
+      }
+    });
+  }
+
+  // Pre-configure audio context so alarm audio plays at maximum device alarm volume stream
+  Future<void> _initAudioPlayer() async {
+    try {
+      await _audioPlayer.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          stayAwake: true,
+          usageType: AndroidUsageType.alarm,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.gainTransient,
+        ),
+      ));
+    } catch (e) {
+      debugPrint("Audio Context Setup Error: $e");
+    }
+  }
+
+  // Handle Speech-to-Text Dictation Toggle
+  Future<void> _toggleDictation() async {
+    if (_sosTriggered || _isSending) return;
+
+    if (!_isListening) {
+      bool available = await _speech.initialize(
+        onStatus: (status) {
+          if (status == 'done' || status == 'notListening') {
+            if (mounted) setState(() => _isListening = false);
+          }
+        },
+        onError: (error) {
+          if (mounted) setState(() => _isListening = false);
+        },
+      );
+
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(
+          onResult: (result) {
+            if (mounted) {
+              setState(() {
+                _dictatedText = result.recognizedWords;
+                if (_selectedCategory == 'OTHER') {
+                  _customCategoryController.text = _dictatedText;
+                }
+              });
+            }
+          },
+        );
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
+    }
+  }
+
+  Future<bool> _handleLocationPermission() async {
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location services are disabled. Please enable GPS.')),
+        );
+      }
+      return false;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permissions are denied.')),
+          );
+        }
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permissions are permanently denied. Please enable them in settings.'),
+          ),
+        );
+      }
+      return false;
+    }
+
+    return true;
+  }
+
+  void _initIncomingSmsListener() async {
+    Map<Permission, PermissionStatus> statuses = await [
+      Permission.sms,
+      Permission.phone,
+      Permission.camera,
+      Permission.microphone,
+    ].request();
+
+    if (statuses[Permission.sms]?.isGranted == true) {
+      debugPrint("✅ SMS Listening active...");
+
+      _telephony.listenIncomingSms(
+        onNewMessage: (SmsMessage message) async {
+          String body = message.body?.toUpperCase() ?? "";
+          String sender = message.address ?? "Unknown";
+
+          debugPrint("📩 SMS Received from $sender: $body");
+
+          if (body.contains("EMERGENCY") || body.contains("SOS")) {
+            await _startHardwareAlert();
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('🚨 EMERGENCY SMS RECEIVED FROM $sender! SIREN & TORCH ACTIVATED!'),
+                  backgroundColor: Colors.red,
+                  duration: const Duration(seconds: 8),
+                ),
+              );
+            }
+          }
+        },
+        onBackgroundMessage: backGroundSmsHandler,
+        listenInBackground: true,
+      );
+    } else {
+      debugPrint("❌ SMS permissions denied by user.");
+    }
+  }
+
+  @override
+  void dispose() {
+    _cancelTimer();
+    _pollTimer?.cancel();
+    _stopHardwareAlert();
+    _speech.stop();
+    _customCategoryController.dispose();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startHardwareAlert() async {
+    if (_isHardwareActive) return;
+    if (mounted) setState(() => _isHardwareActive = true);
+
+    // 1. SOUND: Play alarm/siren sound with fallbacks
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _audioPlayer.setVolume(1.0);
+
+      try {
+        await _audioPlayer.play(AssetSource('siren.mp3'));
+      } catch (_) {
+        await _audioPlayer.play(AssetSource('siren.mp3'));
+      }
+      debugPrint("🔊 Siren audio playing");
+    } catch (e) {
+      debugPrint("❌ Audio Error: $e");
+    }
+
+    // 2. TORCH: Request camera permission and turn on torch
+    try {
+      var cameraStatus = await Permission.camera.status;
+      if (!cameraStatus.isGranted) {
+        cameraStatus = await Permission.camera.request();
+      }
+
+      if (cameraStatus.isGranted) {
+        await TorchLight.enableTorch();
+        debugPrint("🔦 Torch enabled successfully");
+      } else {
+        debugPrint("❌ Camera permission denied for Torch");
+      }
+    } catch (e) {
+      debugPrint("❌ Torch Error: $e");
+    }
+  }
+
+  Future<void> _stopHardwareAlert() async {
+    if (mounted) setState(() => _isHardwareActive = false);
+
+    try {
+      await _audioPlayer.stop();
+    } catch (e) {
+      debugPrint("Audio Stop Error: $e");
+    }
+
+    try {
+      await TorchLight.disableTorch();
+    } catch (e) {
+      debugPrint("Torch Disable Error: $e");
+    }
+  }
+
+  void _startSosCountdown() {
+    if (_isSending || _sosTriggered) return;
+
+    _secondsRemaining = 3;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            _countdownTimer ??= Timer.periodic(const Duration(seconds: 1), (timer) {
+              if (_secondsRemaining > 1) {
+                setDialogState(() {
+                  _secondsRemaining--;
+                });
+              } else {
+                _cancelTimer();
+                Navigator.of(dialogContext).pop();
+                _triggerSosAlert();
+              }
+            });
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Color(0xFFFF5252), size: 28),
+                  SizedBox(width: 8),
+                  Text('Sending SOS Alert', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Distress signal will be transmitted in:',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Colors.black87),
+                  ),
+                  const SizedBox(height: 20),
+                  CircleAvatar(
+                    radius: 40,
+                    backgroundColor: Colors.red.shade100,
+                    child: Text(
+                      '$_secondsRemaining',
+                      style: const TextStyle(
+                        fontSize: 42,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFFF5252),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Tap Cancel if this was triggered accidentally.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              actionsAlignment: MainAxisAlignment.center,
+              actions: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey.shade300,
+                      foregroundColor: Colors.black87,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: () {
+                      _cancelTimer();
+                      Navigator.of(dialogContext).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('SOS Alert Cancelled.'),
+                          backgroundColor: Colors.grey,
+                        ),
+                      );
+                    },
+                    child: const Text('CANCEL SOS', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((_) => _cancelTimer());
+  }
+
+  void _cancelTimer() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+  }
+
+  Future<void> _triggerSosAlert() async {
+    setState(() {
+      _isSending = true;
+    });
+
+    // Stop listening if currently active
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
+    }
+
+    // 1. Immediately fire siren & torch upon SOS trigger
+    await _startHardwareAlert();
+
+    try {
+      await _handleLocationPermission();
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        ).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () async {
+            final lastKnown = await Geolocator.getLastKnownPosition();
+            if (lastKnown == null) throw TimeoutException('No current or cached location');
+            return lastKnown;
+          },
+        );
+      } catch (e) {
+        debugPrint("Location resolution warning: $e");
+      }
+
+      final idToken = await FirebaseAuth.instance.currentUser?.getIdToken();
+      if (idToken == null) throw Exception('Please sign in before sending an SOS.');
+
+      String categoryPayload = _selectedCategory;
+      if (_selectedCategory == 'OTHER' && _customCategoryController.text.trim().isNotEmpty) {
+        categoryPayload = "OTHER: ${_customCategoryController.text.trim()}";
+      }
+
+      // Append voice dictation text if captured
+      if (_dictatedText.trim().isNotEmpty) {
+        categoryPayload += " | Dictation: ${_dictatedText.trim()}";
+      }
+
+      String? fcmToken;
+      try {
+        fcmToken = await FirebaseMessaging.instance.getToken();
+      } catch (_) {}
+
+      final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/trigger');
+
+      final response = await http
+          .post(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $idToken',
+              'bypass-tunnel-reminder': 'true',
+              'X-Tunnel-Skip-Anti-Phishing-Page': 'true',
+            },
+            body: jsonEncode({
+              if (position != null) 'latitude': position.latitude,
+              if (position != null) 'longitude': position.longitude,
+              'category': categoryPayload,
+              'fcmToken': fcmToken ?? 'sample_token',
+              'timestamp': DateTime.now().toIso8601String(),
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        final alertId = responseData['id'];
+
+        setState(() {
+          _sosTriggered = true;
+          _isSending = false;
+          _activeAlertId = alertId != null
+              ? (alertId is int ? alertId : int.tryParse(alertId.toString()))
+              : null;
+        });
+
+        if (_activeAlertId != null) {
+          _startPollingForAcceptance(_activeAlertId!);
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: Colors.green,
+            content: Text('🚨 SOS Alert transmitted! Siren & Torch active.'),
+          ),
+        );
+      } else {
+        throw Exception("Server status ${response.statusCode}");
+      }
+    } catch (e) {
+      debugPrint("SOS API Error: $e");
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+        });
+        _showFallbackDialog();
+      }
+    }
+  }
+
+  void _startPollingForAcceptance(int alertId) {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+      try {
+        final url = Uri.parse('https://13jr54g7-8080.inc1.devtunnels.ms/api/admin/sos/status/$alertId');
+        final response = await http.get(
+          url,
+          headers: {
+            'Authorization': 'Bearer ${await FirebaseAuth.instance.currentUser?.getIdToken() ?? ''}',
+            'bypass-tunnel-reminder': 'true',
+            'X-Tunnel-Skip-Anti-Phishing-Page': 'true',
+          },
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['status'] == 'ACCEPTED') {
+            timer.cancel();
+            if (mounted) {
+              setState(() {
+                _isAccepted = true;
+                _etaMinutes = data['etaMinutes'] ?? 15;
+              });
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Status Check Error: $e");
+      }
+    });
+  }
+
+  Future<void> _sendEmergencySms() async {
+    // Hardware alert call removed from sender side so siren/torch only trigger on receiver phone upon SMS arrival
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> contacts = prefs.getStringList('emergency_contacts') ?? [];
+
+      if (contacts.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No emergency contacts found! Tap top right 3 dots (⋮) to add contacts.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      final bool hasPermission = await _handleLocationPermission();
+      if (!hasPermission) return;
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        ).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () async {
+            final lastKnown = await Geolocator.getLastKnownPosition();
+            if (lastKnown == null) throw TimeoutException('No current or cached location');
+            return lastKnown;
+          },
+        );
+      } catch (_) {}
+
+      String categoryText = _selectedCategory;
+      if (_selectedCategory == 'OTHER' && _customCategoryController.text.trim().isNotEmpty) {
+        categoryText = "OTHER (${_customCategoryController.text.trim()})";
+      }
+
+      if (_dictatedText.trim().isNotEmpty) {
+        categoryText += " | Dictation: ${_dictatedText.trim()}";
+      }
+
+      final String locationText = position == null
+          ? 'Location unavailable'
+          : 'Live Location: https://maps.google.com/?q=${position.latitude},${position.longitude}';
+      final String message = "EMERGENCY ALERT ($categoryText)! I need immediate help. $locationText";
+
+      bool smsSentSuccessfully = false;
+
+      // Attempt Direct Telephony SMS first
+      try {
+        bool? permissionsGranted = await _telephony.requestPhoneAndSmsPermissions;
+
+        if (permissionsGranted == true) {
+          for (String number in contacts) {
+            await _telephony.sendSms(
+              to: number,
+              message: message,
+            );
+          }
+          smsSentSuccessfully = true;
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('🚨 Emergency SMS sent to ${contacts.length} contact(s)!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        }
+      } catch (telephonyError) {
+        debugPrint("Telephony background SMS failed: $telephonyError");
+      }
+
+      // Fallback to Native SMS Intent if background send fails
+      if (!smsSentSuccessfully) {
+        final String recipientString = contacts.map((e) => e.replaceAll(RegExp(r'[^\d+]'), '')).join(';');
+        final Uri smsUri = Uri(
+          scheme: 'sms',
+          path: recipientString,
+          queryParameters: <String, String>{'body': message},
+        );
+
+        if (await canLaunchUrl(smsUri)) {
+          await launchUrl(smsUri, mode: LaunchMode.externalApplication);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Could not open default SMS app.')),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("SMS Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  void _showFallbackDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Server Unreachable'),
+        content: const Text(
+          'Could not connect to emergency network. Would you like to send an emergency SMS to all your saved emergency contacts?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF5252),
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              _sendEmergencySms();
+            },
+            child: const Text('SEND SMS', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _resetAlertState() {
+    _pollTimer?.cancel();
+    _stopHardwareAlert();
+    _customCategoryController.clear();
+    setState(() {
+      _sosTriggered = false;
+      _isSending = false;
+      _isAccepted = false;
+      _activeAlertId = null;
+      _etaMinutes = 0;
+      _selectedCategory = 'GENERAL';
+      _dictatedText = "";
+      _isListening = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'EMERGENCY SOS',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
+        centerTitle: true,
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'contacts') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const EmergencySmsContactsScreen(),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'contacts',
+                child: Row(
+                  children: [
+                    Icon(Icons.contacts_rounded, color: Color(0xFFFF5252)),
+                    SizedBox(width: 10),
+                    Text('Emergency Contacts'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 24.0),
+          child: Column(
+            children: [
+              const Text(
+                'EMERGENCY DISTRESS SIGNAL',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF334155),
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Tap button once to initiate emergency broadcast. You will have 3 seconds to cancel.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+              const SizedBox(height: 24),
+
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Select Emergency Type:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _categories.map((cat) {
+                    final bool isSelected = _selectedCategory == cat['code'];
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8.0),
+                      child: GestureDetector(
+                        onTap: () {
+                          if (!_sosTriggered && !_isSending) {
+                            setState(() {
+                              _selectedCategory = cat['code'];
+                            });
+                          }
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 10, horizontal: 14),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? const Color(0xFFFF5252)
+                                : Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isSelected
+                                  ? const Color(0xFFFF5252)
+                                  : Colors.grey.shade300,
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Icon(
+                                cat['icon'],
+                                color: isSelected ? Colors.white : Colors.grey.shade700,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                cat['label'],
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isSelected ? Colors.white : Colors.grey.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+
+              if (_selectedCategory == 'OTHER') ...[
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _customCategoryController,
+                  enabled: !_sosTriggered && !_isSending,
+                  decoration: InputDecoration(
+                    hintText: 'Type emergency detail (e.g. Gas Leak, Flood)...',
+                    hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                    prefixIcon: const Icon(Icons.edit_note_rounded, color: Color(0xFFFF5252)),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFFFF5252), width: 2),
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 16),
+
+              // Voice Dictation Box
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _isListening ? Colors.red.shade50 : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade300,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic_rounded : Icons.mic_none_rounded,
+                        color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade700,
+                        size: 26,
+                      ),
+                      onPressed: (_sosTriggered || _isSending) ? null : _toggleDictation,
+                    ),
+                    Expanded(
+                      child: Text(
+                        _isListening
+                            ? "Listening... Speak emergency details."
+                            : (_dictatedText.isNotEmpty
+                                ? "\"$_dictatedText\""
+                                : "Tap mic to dictate details by voice"),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: _isListening ? const Color(0xFFFF5252) : Colors.grey.shade700,
+                          fontWeight: _isListening ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                    if (_dictatedText.isNotEmpty && !_isListening)
+                      IconButton(
+                        icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
+                        onPressed: (_sosTriggered || _isSending)
+                            ? null
+                            : () {
+                                setState(() {
+                                  _dictatedText = "";
+                                  if (_selectedCategory == 'OTHER') {
+                                    _customCategoryController.clear();
+                                  }
+                                });
+                              },
+                      ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 30),
+
+              if (_isAccepted) ...[
+                EtaTrackingWidget(initialEtaMinutes: _etaMinutes),
+                const SizedBox(height: 20),
+              ] else if (_sosTriggered) ...[
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange.shade300),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.orange),
+                      ),
+                      SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          'SOS Signal Transmitted!\nWaiting for Admin Dispatch & ETA...',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, color: Colors.orange),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+
+              GestureDetector(
+                onTap: _isSending || _sosTriggered ? null : _startSosCountdown,
+                child: Container(
+                  width: 190,
+                  height: 190,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _sosTriggered
+                        ? Colors.green
+                        : const Color(0xFFFF5252),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_sosTriggered
+                                ? Colors.green
+                                : const Color(0xFFFF5252))
+                            .withValues(alpha: 0.4),
+                        blurRadius: 20,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (_isSending)
+                        const CircularProgressIndicator(color: Colors.white)
+                      else if (_sosTriggered) ...[
+                        const Icon(Icons.check_circle,
+                            size: 50, color: Colors.white),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'ALERT SENT!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        )
+                      ] else ...[
+                        const Text(
+                          'SOS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 42,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2.0,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'TAP TO TRIGGER',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 30),
+
+              if (_sosTriggered || _isHardwareActive)
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.shade800,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.volume_off_rounded, color: Colors.white),
+                  label: const Text('STOP SIREN & RESET',
+                      style: TextStyle(color: Colors.white)),
+                  onPressed: _resetAlertState,
+                )
+              else
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF5252),
+                    side: const BorderSide(color: Color(0xFFFF5252)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 24, vertical: 12),
+                  ),
+                  icon: const Icon(Icons.sms_rounded),
+                  label: const Text('SEND SMS EMERGENCY ALERT'),
+                  onPressed: _sendEmergencySms,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class EtaTrackingWidget extends StatefulWidget {
+  final int initialEtaMinutes;
+
+  const EtaTrackingWidget({super.key, required this.initialEtaMinutes});
+
+  @override
+  State<EtaTrackingWidget> createState() => _EtaTrackingWidgetState();
+}
+
+class _EtaTrackingWidgetState extends State<EtaTrackingWidget> {
+  Timer? _timer;
+  late int _remainingSeconds;
+
+  @override
+  void initState() {
+    super.initState();
+    _remainingSeconds = widget.initialEtaMinutes * 60;
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        if (mounted) {
+          setState(() {
+            _remainingSeconds--;
+          });
+        }
+      } else {
+        _timer?.cancel();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _formatTime(int totalSeconds) {
+    int minutes = totalSeconds ~/ 60;
+    int seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 16.0),
+      padding: const EdgeInsets.all(24.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.shield_rounded, color: Colors.green, size: 56),
+          const SizedBox(height: 12),
+          const Text(
+            'HELP IS ON THE WAY!',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.green,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Rescue team dispatched by Disaster Management Admin.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Colors.grey),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            _formatTime(_remainingSeconds),
+            style: const TextStyle(
+              fontSize: 52,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF1E293B),
+            ),
+          ),
+          const Text(
+            'ESTIMATED TIME OF ARRIVAL',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+              letterSpacing: 1.1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
