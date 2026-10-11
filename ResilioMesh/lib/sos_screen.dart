@@ -13,22 +13,18 @@ import 'emergency_sms_contacts_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
-// Top-level entry point required by Telephony package for background processing
-// Top-level background function called when an SMS arrives on the receiver's phone
 @pragma('vm:entry-point')
 void backGroundSmsHandler(SmsMessage message) async {
   String body = message.body?.toUpperCase() ?? "";
   debugPrint("🚨 Background SMS Received on Receiver Device: $body");
 
   if (body.contains("EMERGENCY") || body.contains("SOS")) {
-    // 1. Turn on the flashlight
     try {
       await TorchLight.enableTorch();
     } catch (e) {
       debugPrint("Background Torch Error: $e");
     }
 
-    // 2. Play the siren audio in background
     try {
       final AudioPlayer backgroundPlayer = AudioPlayer();
       await backgroundPlayer.setAudioContext(AudioContext(
@@ -74,7 +70,6 @@ class _SosScreenState extends State<SosScreen> {
 
   final Telephony _telephony = Telephony.instance;
 
-  // --- Voice Dictation State ---
   late stt.SpeechToText _speech;
   bool _isListening = false;
   String _dictatedText = "";
@@ -99,6 +94,9 @@ class _SosScreenState extends State<SosScreen> {
       if (message.data['type'] == 'ETA_UPDATE') {
         final eta = int.tryParse(message.data['etaMinutes'] ?? '15') ?? 15;
         _pollTimer?.cancel();
+        
+        _startHardwareAlert();
+
         if (mounted) {
           setState(() {
             _isAccepted = true;
@@ -109,7 +107,6 @@ class _SosScreenState extends State<SosScreen> {
     });
   }
 
-  // Pre-configure audio context so alarm audio plays at maximum device alarm volume stream
   Future<void> _initAudioPlayer() async {
     try {
       await _audioPlayer.setAudioContext(AudioContext(
@@ -125,7 +122,6 @@ class _SosScreenState extends State<SosScreen> {
     }
   }
 
-  // Handle Speech-to-Text Dictation Toggle
   Future<void> _toggleDictation() async {
     if (_sosTriggered || _isSending) return;
 
@@ -255,23 +251,22 @@ class _SosScreenState extends State<SosScreen> {
     if (_isHardwareActive) return;
     if (mounted) setState(() => _isHardwareActive = true);
 
-    // 1. SOUND: Play alarm/siren sound with fallbacks
     try {
-      await _audioPlayer.stop();
+      await _audioPlayer.setAudioContext(AudioContext(
+        android: AudioContextAndroid(
+          stayAwake: true,
+          usageType: AndroidUsageType.alarm,
+          contentType: AndroidContentType.sonification,
+          audioFocus: AndroidAudioFocus.gainTransient,
+        ),
+      ));
       await _audioPlayer.setReleaseMode(ReleaseMode.loop);
       await _audioPlayer.setVolume(1.0);
-
-      try {
-        await _audioPlayer.play(AssetSource('siren.mp3'));
-      } catch (_) {
-        await _audioPlayer.play(AssetSource('siren.mp3'));
-      }
-      debugPrint("🔊 Siren audio playing");
+      await _audioPlayer.play(AssetSource('siren.mp3'));
     } catch (e) {
       debugPrint("❌ Audio Error: $e");
     }
 
-    // 2. TORCH: Request camera permission and turn on torch
     try {
       var cameraStatus = await Permission.camera.status;
       if (!cameraStatus.isGranted) {
@@ -280,9 +275,6 @@ class _SosScreenState extends State<SosScreen> {
 
       if (cameraStatus.isGranted) {
         await TorchLight.enableTorch();
-        debugPrint("🔦 Torch enabled successfully");
-      } else {
-        debugPrint("❌ Camera permission denied for Torch");
       }
     } catch (e) {
       debugPrint("❌ Torch Error: $e");
@@ -411,13 +403,11 @@ class _SosScreenState extends State<SosScreen> {
       _isSending = true;
     });
 
-    // Stop listening if currently active
     if (_isListening) {
       await _speech.stop();
       setState(() => _isListening = false);
     }
 
-    // 1. Immediately fire siren & torch upon SOS trigger
     await _startHardwareAlert();
 
     try {
@@ -426,6 +416,11 @@ class _SosScreenState extends State<SosScreen> {
         if (mounted) setState(() => _isSending = false);
         return;
       }
+
+      // Fetch user name and mobile number from SharedPreferences using 'user_name' and 'user_mobile'
+      final prefs = await SharedPreferences.getInstance();
+      final String userName = prefs.getString('user_name') ?? 'Anonymous';
+      final String userMobile = prefs.getString('user_mobile') ?? 'N/A';
 
       Position? position;
       try {
@@ -458,7 +453,6 @@ class _SosScreenState extends State<SosScreen> {
         categoryPayload = "OTHER: ${_customCategoryController.text.trim()}";
       }
 
-      // Append voice dictation text if captured
       if (_dictatedText.trim().isNotEmpty) {
         categoryPayload += " | Dictation: ${_dictatedText.trim()}";
       }
@@ -479,6 +473,8 @@ class _SosScreenState extends State<SosScreen> {
               'X-Tunnel-Skip-Anti-Phishing-Page': 'true',
             },
             body: jsonEncode({
+              'senderName': userName,       // Retrieved from SharedPreferences key 'user_name'
+              'mobileNumber': userMobile,   // Retrieved from SharedPreferences key 'user_mobile'
               'latitude': position?.latitude ?? 19.0760,
               'longitude': position?.longitude ?? 72.8777,
               'category': categoryPayload,
@@ -543,6 +539,9 @@ class _SosScreenState extends State<SosScreen> {
           final data = jsonDecode(response.body);
           if (data['status'] == 'ACCEPTED') {
             timer.cancel();
+
+            await _startHardwareAlert();
+
             if (mounted) {
               setState(() {
                 _isAccepted = true;
@@ -558,7 +557,6 @@ class _SosScreenState extends State<SosScreen> {
   }
 
   Future<void> _sendEmergencySms() async {
-    // Hardware alert call removed from sender side so siren/torch only trigger on receiver phone upon SMS arrival
     try {
       final prefs = await SharedPreferences.getInstance();
       List<String> contacts = prefs.getStringList('emergency_contacts') ?? [];
@@ -620,7 +618,6 @@ class _SosScreenState extends State<SosScreen> {
 
       bool smsSentSuccessfully = false;
 
-      // Attempt Direct Telephony SMS first
       try {
         bool? permissionsGranted = await _telephony.requestPhoneAndSmsPermissions;
 
@@ -646,7 +643,6 @@ class _SosScreenState extends State<SosScreen> {
         debugPrint("Telephony background SMS failed: $telephonyError");
       }
 
-      // Fallback to Native SMS Intent if background send fails
       if (!smsSentSuccessfully) {
         final String recipientString = contacts.map((e) => e.replaceAll(RegExp(r'[^\d+]'), '')).join(';');
         final Uri smsUri = Uri(
@@ -868,7 +864,6 @@ class _SosScreenState extends State<SosScreen> {
 
               const SizedBox(height: 16),
 
-              // Voice Dictation Box
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(

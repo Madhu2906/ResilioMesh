@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Added for local caching
 import 'profile_screen.dart';
 
 class AuthScreen extends StatefulWidget {
@@ -34,6 +35,32 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  /// Caches user profile from Firestore locally for offline SOS reporting
+Future<void> _cacheUserProfile(String uid) async {
+  try {
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get();
+
+    if (userDoc.exists) {
+      Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
+      final prefs = await SharedPreferences.getInstance();
+      
+      String name = data['name'] ?? data['fullName'] ?? 'Unknown User';
+      // Fallback across all possible phone key formats
+      String mobile = data['phone'] ?? data['mobile'] ?? data['phoneNumber'] ?? 'N/A';
+
+      await prefs.setString('user_name', name);
+      await prefs.setString('user_mobile', mobile);
+      
+      debugPrint("Cached Profile -> Name: $name, Mobile: $mobile");
+    }
+  } catch (e) {
+    debugPrint("Failed to cache user profile: $e");
+  }
+}
+
   Future<void> _submitAuth() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -44,10 +71,14 @@ class _AuthScreenState extends State<AuthScreen> {
 
     try {
       if (_isLogin) {
-        await _auth.signInWithEmailAndPassword(
+        UserCredential userCredential = await _auth.signInWithEmailAndPassword(
           email: email,
           password: password,
         );
+        if (userCredential.user != null) {
+          // Cache profile details locally upon login
+          await _cacheUserProfile(userCredential.user!.uid);
+        }
       } else {
         final userCredential = await _auth.createUserWithEmailAndPassword(
           email: email,
@@ -73,6 +104,9 @@ class _AuthScreenState extends State<AuthScreen> {
             'email': email,
             'createdAt': FieldValue.serverTimestamp(),
           });
+
+          // Cache profile details locally upon registration
+          await _cacheUserProfile(user.uid);
         }
 
         if (mounted) {
@@ -123,11 +157,10 @@ class _AuthScreenState extends State<AuthScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // Header Logo / Shield Icon in Red
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: primaryRed.withOpacity(0.1),
+                    color: primaryRed.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
@@ -137,8 +170,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-
-                // Title
                 Text(
                   _isLogin ? 'Welcome Back' : 'Create Account',
                   style: const TextStyle(
@@ -159,8 +190,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ),
                 const SizedBox(height: 32),
-
-                // Form Card
                 Container(
                   padding: const EdgeInsets.all(24.0),
                   decoration: BoxDecoration(
@@ -168,7 +197,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withValues(alpha: 0.05),
                         blurRadius: 15,
                         offset: const Offset(0, 5),
                       ),
@@ -180,7 +209,6 @@ class _AuthScreenState extends State<AuthScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (!_isLogin) ...[
-                          // Full Name Field
                           TextFormField(
                             controller: _nameController,
                             decoration: InputDecoration(
@@ -209,8 +237,6 @@ class _AuthScreenState extends State<AuthScreen> {
                             },
                           ),
                           const SizedBox(height: 16),
-
-                          // Phone Number Field
                           TextFormField(
                             controller: _phoneController,
                             keyboardType: TextInputType.phone,
@@ -240,8 +266,6 @@ class _AuthScreenState extends State<AuthScreen> {
                             },
                           ),
                           const SizedBox(height: 16),
-
-                          // Location / Address Field
                           TextFormField(
                             controller: _locationController,
                             decoration: InputDecoration(
@@ -272,8 +296,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                           const SizedBox(height: 16),
                         ],
-
-                        // Email Field
                         TextFormField(
                           controller: _emailController,
                           keyboardType: TextInputType.emailAddress,
@@ -305,8 +327,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           },
                         ),
                         const SizedBox(height: 16),
-
-                        // Password Field
                         TextFormField(
                           controller: _passwordController,
                           obscureText: _obscurePassword,
@@ -347,8 +367,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           },
                         ),
                         const SizedBox(height: 24),
-
-                        // Action Button
                         SizedBox(
                           height: 52,
                           child: ElevatedButton(
@@ -384,8 +402,6 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-
-                // Toggle Login / Register State
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

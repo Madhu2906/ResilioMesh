@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class EmergencyContactsScreen extends StatelessWidget {
-  const EmergencyContactsScreen({Key? key}) : super(key: key);
+  const EmergencyContactsScreen({super.key});
 
   final List<Map<String, String>> emergencyContacts = const [
     {

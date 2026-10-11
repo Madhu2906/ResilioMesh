@@ -3,31 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Emergency Management Admin Panel</title>
+    <title>Emergency Management Admin Panel - ResilioMesh</title>
+    
+    <!-- Google Fonts & FontAwesome -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { 
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            padding: 40px 20px; 
-            background: #f8fafc; 
+            padding: 30px 20px; 
+            background: #f1f5f9; 
             color: #1e293b;
         }
 
         .dashboard-container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
         }
 
+        .top-navbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #0f172a;
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            margin-bottom: 28px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
         .header-title { 
-            color: #0f172a; 
-            font-size: 1.75rem;
+            font-size: 1.25rem;
             font-weight: 800;
-            padding-bottom: 16px; 
-            margin-bottom: 24px;
-            border-bottom: 2px solid #e2e8f0; 
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            background: rgba(22, 163, 74, 0.2);
+            padding: 6px 12px;
+            border-radius: 20px;
+            color: #4ade80;
+            font-weight: 600;
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background-color: #4ade80;
+            border-radius: 50%;
+            box-shadow: 0 0 0 rgba(74, 222, 128, 0.4);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); }
+            70% { box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+        }
+
+        @keyframes flashBanner {
+            0% { background-color: #dc3545; }
+            50% { background-color: #ffc107; }
+            100% { background-color: #dc3545; }
+        }
+        .alert-banner {
+            animation: flashBanner 1.5s infinite;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            padding: 12px;
+            border-radius: 8px;
+            display: none;
+            margin-bottom: 20px;
         }
 
         .card { 
@@ -71,7 +127,7 @@
 
         .grid-info {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 16px;
             margin-bottom: 20px;
         }
@@ -114,7 +170,7 @@
             gap: 8px;
         }
 
-        select, input[type="number"] {
+        select, input[type="text"], input[type="number"] {
             padding: 8px 12px;
             border: 1px solid #cbd5e1;
             border-radius: 6px;
@@ -124,7 +180,7 @@
             background: #ffffff;
         }
 
-        select:focus, input[type="number"]:focus {
+        select:focus, input:focus {
             border-color: #2563eb;
         }
 
@@ -152,98 +208,235 @@
         }
 
         .maps-link:hover { text-decoration: underline; }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            background: white;
+            border-radius: 12px;
+            color: #64748b;
+            font-weight: 500;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
     </style>
 </head>
 <body>
 
     <div class="dashboard-container">
-        <h2 class="header-title">🚨 Real-time Emergency Distress Feed</h2>
-        <div id="alertsContainer">Fetching active alerts...</div>
+        <!-- Top Command Navigation -->
+        <div class="top-navbar">
+            <div class="header-title">
+                <i class="fas fa-shield-alt text-danger"></i> ResilioMesh Central Command Portal
+            </div>
+            <div class="status-indicator">
+                <span class="pulse-dot"></span> Firestore Live Feed Connected
+            </div>
+        </div>
+
+        <!-- Flashing SLA Escalation Banner -->
+        <div id="slaAlertBanner" class="alert-banner">
+            🔥 SLA BREACH: CRITICAL INCIDENT UNACKNOWLEDGED (> 5 MINS)! 🔥
+        </div>
+
+        <!-- Shift Handover & Dispatcher Notes Log -->
+        <div class="card mb-4" style="border-left-color: #0284c7;">
+            <div class="alert-header">
+                <span class="alert-id"><i class="fas fa-clipboard-list text-primary"></i> Shift Handover & Dispatcher Notes Log</span>
+                <span class="badge" style="background: #e0f2fe; color: #0369a1;">24/7 Active Record</span>
+            </div>
+            <div class="input-group mb-3" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <input type="text" id="noteAuthor" placeholder="Officer Name (e.g. Sharma)" style="max-width: 200px;">
+                <input type="text" id="noteInput" placeholder="Enter shift update (e.g., Heavy waterlogging near L Ward)..." style="flex: 1; min-width: 250px;">
+                <button class="btn-dispatch" onclick="postShiftNote()" style="background: #0284c7;"><i class="fas fa-paper-plane"></i> Post Note</button>
+            </div>
+            <div id="shiftNotesContainer" style="max-height: 140px; overflow-y: auto; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <span class="text-muted" style="font-size: 0.85rem; color: #64748b;">Loading shift logs...</span>
+            </div>
+        </div>
+
+        <div id="alertsContainer">
+            <div class="empty-state"><i class="fas fa-spinner fa-spin"></i> Connecting to Cloud Firestore live stream...</div>
+        </div>
     </div>
 
+    <!-- Firebase SDK (v9 Compatibility Mode) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    <audio id="alertAudio" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
     <script>
-        const API_BASE = "http://localhost:8080/api/admin/sos";
+        // REPLACE WITH YOUR ACTUAL FIREBASE WEB CONFIGURATION FROM FIREBASE CONSOLE
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
         const ADMIN_LAT = 19.0760; 
         const ADMIN_LON = 72.8777;
+        const slaBreachedReports = new Set();
 
-        async function fetchActiveAlerts() {
-            try {
-                const response = await fetch(`${API_BASE}/active`);
-                const alerts = await response.json();
-                
-                const container = document.getElementById('alertsContainer');
-                container.innerHTML = '';
+        // Real-time listener for Firestore collection ('sos_alerts')
+        function initFirestoreListener() {
+            db.collection("sos_alerts")
+              .orderBy("timestamp", "desc")
+              .onSnapshot((snapshot) => {
+                  const container = document.getElementById('alertsContainer');
+                  container.innerHTML = '';
 
-                if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<p style="color: #64748b; font-weight: 500;">No active emergency alerts at this moment.</p>';
+                  if (snapshot.empty) {
+                      container.innerHTML = '<div class="empty-state">No active emergency distress alerts at this moment. All clear.</div>';
+                      document.getElementById('slaAlertBanner').style.display = 'none';
+                      return;
+                  }
+
+                  let currentTime = Date.now();
+                  let hasSlaBreach = false;
+
+                  snapshot.docs.forEach((doc, index) => {
+                      const alert = doc.data();
+                      const alertId = doc.id;
+                      
+                      const lat = parseFloat(alert.latitude) || ADMIN_LAT;
+                      const lon = parseFloat(alert.longitude) || ADMIN_LON;
+                      const estimatedTimeMins = calculateEstimatedTravelTime(ADMIN_LAT, ADMIN_LON, lat, lon);
+
+                      let timeFormatted = 'Just now';
+                      let alertEpoch = currentTime;
+                      if (alert.timestamp && alert.timestamp.seconds) {
+                          alertEpoch = alert.timestamp.seconds * 1000;
+                          timeFormatted = new Date(alertEpoch).toLocaleString();
+                      } else if (alert.timestamp && typeof alert.timestamp === 'string') {
+                          alertEpoch = new Date(alert.timestamp).getTime();
+                          timeFormatted = new Date(alertEpoch).toLocaleString();
+                      }
+
+                      // Check SLA Breach (> 5 mins unassigned active alert)
+                      let isUnassigned = (!alert.status || alert.status === 'ACTIVE') && (!alert.assignedDepartment);
+                      if (isUnassigned && (currentTime - alertEpoch > 5 * 60 * 1000)) {
+                          hasSlaBreach = true;
+                      }
+
+                      const victimName = alert.senderName || alert.userName || alert.name || 'Anonymous';
+                      const victimPhone = alert.mobileNumber || alert.phone || alert.contactNumber || 'N/A';
+
+                      const card = document.createElement('div');
+                      card.className = 'card';
+                      card.innerHTML = `
+                          <div class="alert-header">
+                              <span class="alert-id">🚨 ALERT #${snapshot.docs.length - index}</span>
+                              <span class="badge-category">${alert.emergencyType || alert.category || 'GENERAL EMERGENCY'}</span>
+                          </div>
+
+                          <div class="grid-info">
+                              <div class="info-item">
+                                  <span class="info-label">👤 Victim Name</span>
+                                  <span class="info-value">${victimName}</span>
+                              </div>
+                              <div class="info-item">
+                                  <span class="info-label">📞 Contact Number</span>
+                                  <span class="info-value">
+                                      <a href="tel:${victimPhone}" style="color: inherit; text-decoration: none;">${victimPhone}</a>
+                                  </span>
+                              </div>
+                              <div class="info-item">
+                                  <span class="info-label">🕒 Time Reported</span>
+                                  <span class="info-value">${timeFormatted}</span>
+                              </div>
+                              <div class="info-item">
+                                  <span class="info-label">📍 Coordinates</span>
+                                  <span class="info-value">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
+                              </div>
+                              <div class="info-item">
+                                  <span class="info-label">🧭 Route Est.</span>
+                                  <span class="info-value">~${estimatedTimeMins} mins</span>
+                              </div>
+                              <div class="info-item">
+                                  <span class="info-label">🗺️ Navigation</span>
+                                  <span class="info-value">
+                                      <a href="https://www.google.com/maps?q=${lat},${lon}" target="_blank" class="maps-link">Open in Maps ↗</a>
+                                  </span>
+                              </div>
+                          </div>
+
+                          <div class="dispatch-controls">
+                              <div class="control-group">
+                                  <label class="info-label" for="dept_${alertId}">Department:</label>
+                                  <select id="dept_${alertId}">
+                                      <option value="MEDICAL">🚑 Medical & Ambulance</option>
+                                      <option value="FIRE">🚒 Fire & Rescue Team</option>
+                                      <option value="POLICE">🚓 Police Department</option>
+                                      <option value="DISASTER_MGMT">⚠️ Disaster Response Unit</option>
+                                  </select>
+                              </div>
+
+                              <div class="control-group">
+                                  <label class="info-label" for="eta_${alertId}">ETA (Mins):</label>
+                                  <input type="number" id="eta_${alertId}" value="${estimatedTimeMins}" min="1" style="width: 70px;">
+                              </div>
+
+                              <button class="btn-dispatch" onclick="dispatchHelp('${alertId}')">
+                                  ✔ Dispatch Rescue Unit
+                              </button>
+                          </div>
+                      `;
+                      container.appendChild(card);
+                  });
+
+                  if (hasSlaBreach) {
+                      document.getElementById('slaAlertBanner').style.display = 'block';
+                      document.getElementById('alertAudio').play().catch(() => {});
+                  } else {
+                      document.getElementById('slaAlertBanner').style.display = 'none';
+                  }
+              }, (error) => {
+                  console.error("Firestore connection error:", error);
+                  document.getElementById('alertsContainer').innerHTML = '<div class="empty-state text-danger">⚠️ Error connecting to Firestore live stream. Check configuration credentials.</div>';
+              });
+        }
+
+        // Shift Notes Functions via Firestore collection ('shift_notes')
+        function loadShiftNotes() {
+            db.collection("shift_notes").orderBy("timestamp", "desc").onSnapshot((snapshot) => {
+                const container = document.getElementById('shiftNotesContainer');
+                if (snapshot.empty) {
+                    container.innerHTML = '<span style="font-size: 0.85rem; color: #64748b;">No shift handover notes recorded yet.</span>';
                     return;
                 }
-
-                alerts.forEach(alert => {
-                    const estimatedTimeMins = calculateEstimatedTravelTime(ADMIN_LAT, ADMIN_LON, alert.latitude, alert.longitude);
-
-                    const card = document.createElement('div');
-                    card.className = 'card';
-                    card.innerHTML = `
-                        <div class="alert-header">
-                            <span class="alert-id">🚨 ALERT #${alert.id}</span>
-                            <span class="badge-category">${alert.category || 'GENERAL EMERGENCY'}</span>
-                        </div>
-
-                        <div class="grid-info">
-                            <div class="info-item">
-                                <span class="info-label">👤 Victim Name</span>
-                                <span class="info-value">${alert.userName || alert.name || 'John Doe'}</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">📞 Contact Number</span>
-                                <span class="info-value">${alert.userPhone || alert.phone || '+91 98765 43210'}</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">🕒 Time Reported</span>
-                                <span class="info-value">${new Date(alert.createdAt).toLocaleString()}</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">📍 Coordinates</span>
-                                <span class="info-value">${alert.latitude}, ${alert.longitude}</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">🧭 Route Est.</span>
-                                <span class="info-value">~${estimatedTimeMins} mins</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="info-label">🗺️ Navigation</span>
-                                <span class="info-value">
-                                    <a href="https://www.google.com/maps?q=${alert.latitude},${alert.longitude}" target="_blank" class="maps-link">Open in Maps ↗</a>
-                                </span>
-                            </div>
-                        </div>
-
-                        <div class="dispatch-controls">
-                            <div class="control-group">
-                                <label class="info-label" for="dept_${alert.id}">Department:</label>
-                                <select id="dept_${alert.id}">
-                                    <option value="MEDICAL">🚑 Medical & Ambulance</option>
-                                    <option value="FIRE">🚒 Fire & Rescue Team</option>
-                                    <option value="POLICE">🚓 Police Department</option>
-                                    <option value="DISASTER_MGMT">⚠️ Disaster Response Unit</option>
-                                </select>
-                            </div>
-
-                            <div class="control-group">
-                                <label class="info-label" for="eta_${alert.id}">ETA (Mins):</label>
-                                <input type="number" id="eta_${alert.id}" value="${estimatedTimeMins}" min="1" style="width: 70px;">
-                            </div>
-
-                            <button class="btn-dispatch" onclick="dispatchHelp(${alert.id})">
-                                ✔ Dispatch Rescue Unit
-                            </button>
+                container.innerHTML = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    let tStr = data.timestamp ? new Date(data.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '';
+                    return `
+                        <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 6px; font-size: 0.85rem;">
+                            <strong>${data.author || 'Dispatcher'}</strong> <span style="color: #64748b;">(${tStr}):</span> ${data.note}
                         </div>
                     `;
-                    container.appendChild(card);
+                }).join('');
+            });
+        }
+
+        async function postShiftNote() {
+            let author = document.getElementById('noteAuthor').value.trim() || 'Dispatcher';
+            let noteText = document.getElementById('noteInput').value.trim();
+            if (!noteText) return;
+
+            try {
+                await db.collection("shift_notes").add({
+                    author: author,
+                    note: noteText,
+                    timestamp: new Date().toISOString()
                 });
-            } catch (err) {
-                console.error("Error fetching alerts:", err);
+                document.getElementById('noteInput').value = '';
+            } catch (e) {
+                console.error("Error posting note:", e);
             }
         }
 
@@ -257,7 +450,7 @@
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             const distanceKm = R * c;
             
-            return Math.max(5, Math.ceil(distanceKm * 2) + 3); 
+            return Math.max(3, Math.ceil(distanceKm * 2) + 2); 
         }
 
         async function dispatchHelp(alertId) {
@@ -265,21 +458,22 @@
             const department = document.getElementById(`dept_${alertId}`).value;
             
             try {
-                const response = await fetch(`${API_BASE}/accept/${alertId}?etaMinutes=${etaMinutes}&department=${department}`, {
-                    method: 'POST'
+                await db.collection("sos_alerts").doc(alertId).update({
+                    status: "DISPATCHED",
+                    assignedDepartment: department,
+                    etaMinutes: etaMinutes,
+                    dispatchedAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
 
-                if (response.ok) {
-                    alert(`✓ Rescue Unit from [${department}] dispatched successfully with ETA of ${etaMinutes} mins!`);
-                    fetchActiveAlerts();
-                }
+                alert(`✓ Rescue Unit from [${department}] dispatched successfully with ETA of ${etaMinutes} mins!`);
             } catch (err) {
-                console.error("Failed to dispatch help:", err);
+                console.error("Failed to update Firestore dispatch status:", err);
+                alert("Failed to record dispatch action in database.");
             }
         }
 
-        setInterval(fetchActiveAlerts, 4000);
-        fetchActiveAlerts();
+        initFirestoreListener();
+        loadShiftNotes();
     </script>
 </body>
 </html>

@@ -94,3 +94,33 @@ Navigate to the backend module:
 
 Bash
 cd resiliomesh-backend/resiliomesh-backend
+
+
+Run the Spring Boot application using the Maven wrapper:
+
+Bash
+# On Linux/macOS
+./mvnw spring-boot:run
+
+# On Windows PowerShell
+.\mvnw.cmd spring-boot:run
+API Base URL: http://localhost:8080
+
+Admin Control Panel: http://localhost:8080/admin_dashboard.html
+
+3. Mobile App Setup
+Navigate to the Flutter project directory:
+
+Bash
+cd ResilioMesh
+Configure your server IP address inside lib/config/api_config.dart:
+
+Dart
+const String baseUrl = "http://<YOUR_LOCAL_IP>:8080";
+Install dependencies and launch the app:
+
+Bash
+flutter pub get
+flutter run
+📄 License
+Distributed under the MIT License. See LICENSE for more information.

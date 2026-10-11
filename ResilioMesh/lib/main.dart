@@ -1,16 +1,19 @@
-//  https://13jr54g7-8080.inc1.devtunnels.ms/api/users/update-device
+// https://13jr54g7-8080.inc1.devtunnels.ms/api/users/update-device
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:torch_light/torch_light.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 // Internal App Imports
 import 'privacy_policy_screen.dart';
@@ -28,6 +31,9 @@ import 'login_screen.dart';
 import 'auth_service.dart';
 import 'profile_screen.dart';
 import 'services/location_service.dart';
+import 'p2p_mesh_screen.dart';
+import 'services/sync_service.dart';
+import 'services/p2p_mesh_service.dart';
 
 // Global Navigation Key to handle notification taps anywhere
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -47,6 +53,25 @@ const AndroidNotificationChannel channel = AndroidNotificationChannel(
   importance: Importance.max,
   playSound: true,
 );
+
+/// Requests required permissions and starts the P2P Mesh engine automatically
+Future<void> initMeshPermissionsAndStart() async {
+  try {
+    await [
+      Permission.location,
+      Permission.bluetooth,
+      Permission.bluetoothScan,
+      Permission.bluetoothAdvertise,
+      Permission.bluetoothConnect,
+      Permission.nearbyWifiDevices,
+    ].request();
+
+    await P2pMeshService().startMeshNode();
+    debugPrint("P2P Mesh Node automatically started.");
+  } catch (e) {
+    debugPrint("Error initializing P2P Mesh Node: $e");
+  }
+}
 
 // Trigger Siren Sound & Camera Flash Strobe Effect
 Future<void> _triggerEmergencyHardwareEffects() async {
@@ -84,6 +109,13 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Start continuous network monitoring for automatic cloud sync
+  SyncService.instance.initialize();
+
+  // Initialize P2P Mesh permissions and launch discovery/advertising automatically
+  await initMeshPermissionsAndStart();
+
   await Firebase.initializeApp();
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -203,9 +235,9 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
         return;
       }
 
-      // 🔔 SUBSCRIBE TO FCM BROADCAST TOPIC FOR SOS ALERTS
+      // SUBSCRIBE TO FCM BROADCAST TOPIC FOR SOS ALERTS
       await messaging.subscribeToTopic('sos-alerts');
-      debugPrint("🔔 Subscribed device to FCM topic: sos-alerts");
+      debugPrint("Subscribed device to FCM topic: sos-alerts");
 
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -282,7 +314,7 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
         url,
         headers: {
           'Content-Type': 'application/json',
-          'bypass-tunnel-reminder': 'true', // 👈 BYPASS DEV TUNNEL INTERSTITIAL PAGE
+          'bypass-tunnel-reminder': 'true', // BYPASS DEV TUNNEL INTERSTITIAL PAGE
         },
         body: jsonEncode({
           'fcmToken': token,
@@ -312,6 +344,31 @@ class _ResilioMeshAppState extends State<ResilioMeshApp> {
   }
 }
 
+/// Helper to cache existing user profile details locally on startup
+Future<void> _cacheUserProfile(String uid) async {
+  try {
+    DocumentSnapshot userDoc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .get();
+
+    if (userDoc.exists) {
+      Map<String, dynamic> data = userDoc.data() as Map<String, dynamic>;
+      final prefs = await SharedPreferences.getInstance();
+      
+      String name = data['name'] ?? data['fullName'] ?? 'Unknown User';
+      // Fallback across all possible phone key formats
+      String mobile = data['phone'] ?? data['mobile'] ?? data['phoneNumber'] ?? 'N/A';
+
+      await prefs.setString('user_name', name);
+      await prefs.setString('user_mobile', mobile);
+      
+      debugPrint("Cached Profile -> Name: $name, Mobile: $mobile");
+    }
+  } catch (e) {
+    debugPrint("Failed to cache user profile: $e");
+  }
+}
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
@@ -325,7 +382,9 @@ class AuthWrapper extends StatelessWidget {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        if (snapshot.hasData) {
+        if (snapshot.hasData && snapshot.data != null) {
+          // Cache user profile locally on startup if session exists
+          _cacheUserProfile(snapshot.data!.uid);
           return const HomeScreen();
         }
         return const AuthScreen();
@@ -553,7 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // 🚀 Automatically sync device location & FCM token upon opening home screen
+    // Automatically sync device location & FCM token upon opening home screen
     LocationService.syncUserLocationAndToken();
   }
 
@@ -575,7 +634,7 @@ class _HomeScreenState extends State<HomeScreen> {
         currentIndex: _currentIndex,
         onTap: (index) {
           if (index == 3) {
-            makePhoneCall('8369732553');
+            makePhoneCall('112');
           } else {
             setState(() => _currentIndex = index);
           }
@@ -797,6 +856,19 @@ class DashboardContent extends StatelessWidget {
                           );
                         },
                       ),
+                      DashboardItem(
+                        icon: Icons.hub_outlined,
+                        label: 'P2P Mesh\nNetwork',
+                        iconColor: const Color(0xFF4CAF50),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const P2pMeshScreen(),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -922,7 +994,7 @@ class AppDrawer extends StatelessWidget {
           }),
           _buildDrawerTile(Icons.share_outlined, 'Share App', () {}),
           _buildDrawerTile(Icons.star_outline_rounded, 'Rate Us', () {}),
-          // 🔴 LOGOUT TILE
+          // LOGOUT TILE
           _buildDrawerTile(
             Icons.logout_rounded,
             'Logout',
@@ -969,8 +1041,6 @@ class AppDrawer extends StatelessWidget {
     );
   }
 }
-
-
 
 // ==========================================
 // LIVE WEATHER SCREEN
@@ -1137,7 +1207,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.15),
+                            color: Colors.black.withValues(alpha: 0.15),
                             blurRadius: 6,
                             offset: const Offset(0, 3),
                           ),
@@ -1253,7 +1323,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                       if (_isLoading)
                         Positioned.fill(
                           child: Container(
-                            color: Colors.white.withOpacity(0.7),
+                            color: Colors.white.withValues(alpha: 0.7),
                             child: const Center(
                               child: CircularProgressIndicator(color: primaryRed, strokeWidth: 2),
                             ),

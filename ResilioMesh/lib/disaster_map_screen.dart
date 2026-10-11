@@ -69,7 +69,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
         LatLng(14.0000, 74.4000),
         LatLng(18.0000, 72.9000),
       ],
-      color: Colors.amber.withOpacity(0.25),
+      color: Colors.amber.withValues(alpha: 0.25),
       borderColor: Colors.amber.shade900,
       borderStrokeWidth: 2.0,
     ),
@@ -83,7 +83,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
         LatLng(30.2000, 77.8000),
         LatLng(32.0000, 75.8000),
       ],
-      color: Colors.deepOrange.withOpacity(0.25),
+      color: Colors.deepOrange.withValues(alpha: 0.25),
       borderColor: Colors.red.shade900,
       borderStrokeWidth: 2.0,
     ),
@@ -95,7 +95,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
         LatLng(26.8000, 88.8000),
         LatLng(26.7000, 88.2000),
       ],
-      color: Colors.amber.withOpacity(0.30),
+      color: Colors.amber.withValues(alpha: 0.30),
       borderColor: Colors.amber.shade900,
       borderStrokeWidth: 2.0,
     ),
@@ -428,7 +428,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
               Row(
                 children: [
                   CircleAvatar(
-                    backgroundColor: event.color.withOpacity(0.2),
+                    backgroundColor: event.color.withValues(alpha: 0.2),
                     child: Icon(event.icon, color: event.color),
                   ),
                   const SizedBox(width: 12),
@@ -574,7 +574,7 @@ class _DisasterMapScreenState extends State<DisasterMapScreen> {
                       height: 50,
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.3),
+                          color: Colors.blue.withValues(alpha: 0.3),
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(

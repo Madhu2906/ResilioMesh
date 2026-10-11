@@ -292,7 +292,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.15),
+                            color: Colors.black.withValues(alpha: 0.15),
                             blurRadius: 8,
                             offset: const Offset(0, 4),
                           ),
@@ -471,7 +471,7 @@ class _LiveWeatherScreenState extends State<LiveWeatherScreen> {
                       if (_isLoading)
                         Positioned.fill(
                           child: Container(
-                            color: Colors.white.withOpacity(0.7),
+                            color: Colors.white.withValues(alpha: 0.7),
                             child: const Center(
                               child: CircularProgressIndicator(
                                 color: primaryRed,

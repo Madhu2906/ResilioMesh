@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Added to clear local cache on logout
 
 class AuthService {
   // Method to handle user logout with a confirmation dialog
@@ -35,7 +36,17 @@ class AuthService {
               onPressed: () async {
                 Navigator.of(dialogContext).pop(); // Close dialog
                 Navigator.of(context).pop(); // Close drawer menu
-                await FirebaseAuth.instance.signOut(); // End Firebase Session
+                
+                // Clear local cached user credentials on logout
+                try {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.remove('user_name');
+                  await prefs.remove('user_mobile');
+                } catch (e) {
+                  debugPrint("Error clearing local cache on logout: $e");
+                }
+
+                await FirebaseAuth.instance.signOut(); // End Firebase Session[cite: 9]
               },
               child: const Text('Logout'),
             ),

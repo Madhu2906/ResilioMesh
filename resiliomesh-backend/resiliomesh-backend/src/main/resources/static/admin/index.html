@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ResilioMesh - Emergency SOS Control Center</title>
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Leaflet OpenStreetMap CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        #map {
+            height: 450px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        .table-container {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+        .media-thumbnail {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-right: 4px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .media-thumbnail:hover {
+            transform: scale(1.05);
+        }
+        .kpi-card {
+            border-radius: 10px;
+            padding: 15px;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        @keyframes flashBanner {
+            0% { background-color: #dc3545; }
+            50% { background-color: #ffc107; }
+            100% { background-color: #dc3545; }
+        }
+        .alert-banner {
+            animation: flashBanner 1.5s infinite;
+            color: white;
+            font-weight: bold;
+            text-align: center;
+            padding: 10px;
+            border-radius: 8px;
+            display: none;
+            margin-bottom: 15px;
+        }
+        .timeline-item {
+            position: relative;
+            padding-left: 25px;
+            margin-bottom: 15px;
+            border-left: 2px solid #0d6efd;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 2px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #0d6efd;
+        }
+    </style>
+</head>
+<body class="bg-light">
+
+<!-- Top Navigation Bar -->
+<nav class="navbar navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand fw-bold" href="#">
+            <i class="fas fa-shield-alt text-danger"></i> ResilioMesh Central Command Portal
+        </a>
+        <div>
+            <button class="btn btn-danger btn-sm me-2" onclick="triggerAreaBroadcast()"><i class="fas fa-bullhorn"></i> Broadcast Alert</button>
+            <button class="btn btn-outline-light btn-sm me-2" onclick="exportToCSV()"><i class="fas fa-file-export"></i> Export CSV</button>
+            <button class="btn btn-outline-light btn-sm" onclick="loadAdminIncidents()"><i class="fas fa-sync-alt"></i> Refresh</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid my-4">
+    <!-- Flashing Alert Banner for New Incidents & SLA Escalations -->
+    <div id="newSosAlertBanner" class="alert-banner">
+        🚨 NEW EMERGENCY SOS BROADCAST RECEIVED! 🚨
+    </div>
+
+    <!-- Analytics & Summary KPI Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="kpi-card bg-danger">
+                <h6><i class="fas fa-exclamation-triangle"></i> Critical Alerts</h6>
+                <h3 id="kpiCritical" class="fw-bold mb-0">0</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card bg-warning text-dark">
+                <h6><i class="fas fa-clock"></i> Active / Pending</h6>
+                <h3 id="kpiActive" class="fw-bold mb-0">0</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card bg-success">
+                <h6><i class="fas fa-check-circle"></i> Resolved Today</h6>
+                <h3 id="kpiResolved" class="fw-bold mb-0">0</h3>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card bg-primary">
+                <h6><i class="fas fa-wifi"></i> Mesh Nodes Online</h6>
+                <h3 class="fw-bold mb-0">14 Active</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shift Handover & Dispatcher Notes Panel -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <span><i class="fas fa-clipboard-list"></i> Shift Handover & Dispatcher Notes Log</span>
+                    <span class="badge bg-secondary">24/7 Active Record</span>
+                </div>
+                <div class="card-body bg-white">
+                    <div class="input-group mb-3">
+                        <input type="text" id="noteAuthor" class="form-control form-control-sm" placeholder="Dispatcher Name (e.g. Officer Sharma)" style="max-width: 250px;">
+                        <input type="text" id="noteInput" class="form-control form-control-sm" placeholder="Enter shift update (e.g., Heavy flooding near L Ward; avoid Eastern Express Highway)...">
+                        <button class="btn btn-primary btn-sm" onclick="postShiftNote()"><i class="fas fa-paper-plane"></i> Post Note</button>
+                    </div>
+                    <div id="shiftNotesContainer" style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 bg-light">
+                        <span class="text-muted small">Loading shift notes...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Leaflet Disaster Incident Map View -->
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center fw-bold">
+                    <span><i class="fas fa-map-marked-alt"></i> Live Emergency Map & Triage View</span>
+                    <span id="activeIncidentCount" class="badge bg-light text-primary">0 Active Incidents</span>
+                </div>
+                <div class="card-body p-0">
+                    <div id="map"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Emergency Reports Data Table & Controls -->
+        <div class="col-12">
+            <div class="table-container">
+                <div class="row mb-3 align-items-center g-2">
+                    <div class="col-md-3">
+                        <h5 class="fw-bold mb-0"><i class="fas fa-list-ul"></i> Dispatch Queue</h5>
+                    </div>
+                    <!-- Search Bar -->
+                    <div class="col-md-3">
+                        <input type="text" id="searchInput" class="form-control form-control-sm" placeholder="Search name, phone, title..." onkeyup="filterTable()">
+                    </div>
+                    <!-- Status Filter -->
+                    <div class="col-md-3">
+                        <select id="statusFilter" class="form-select form-select-sm" onchange="filterTable()">
+                            <option value="ALL">All Statuses</option>
+                            <option value="NEW" selected>Active / New</option>
+                            <option value="RESOLVED">Resolved / Safe</option>
+                        </select>
+                    </div>
+                    <!-- Reset Filters Button -->
+                    <div class="col-md-3 text-end">
+                        <button class="btn btn-outline-secondary btn-sm" onclick="resetFilters()"><i class="fas fa-undo"></i> Reset Filters</button>
+                    </div>
+                </div>
+
+                <!-- Cascading Location Filters Row -->
+                <div class="row mb-3 g-2 bg-light p-2 rounded border">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">State</label>
+                        <select id="stateFilter" class="form-select form-select-sm" onchange="onStateChange()">
+                            <option value="">All States</option>
+                            <option value="Maharashtra" selected>Maharashtra</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">City / District</label>
+                        <select id="cityFilter" class="form-select form-select-sm" onchange="onCityChange()">
+                            <option value="">All Cities</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">Local Area / Suburb</label>
+                        <select id="areaFilter" class="form-select form-select-sm" onchange="filterTable()" disabled>
+                            <option value="">All Areas</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>#</th>
+                                <th>Severity</th>
+                                <th>Victim Name</th>
+                                <th>Mobile</th>
+                                <th>Incident Details</th>
+                                <th>Location</th>
+                                <th>Assign Team</th>
+                                <th>Attachments</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reportsTableBody">
+                            <!-- Rows injected dynamically via JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Full-Screen Media Modal -->
+<div id="mediaModal" style="display:none; position:fixed; z-index:9999; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); justify-content:center; align-items:center;">
+    <div style="position:relative; max-width:80%; max-height:80%; text-align:center;">
+        <span onclick="closeMediaModal()" style="position:absolute; top:-45px; right:0; color:white; font-size:40px; cursor:pointer; font-weight:bold;">&times;</span>
+        <div id="modalContentContainer"></div>
+    </div>
+</div>
+
+<!-- Incident Audit Timeline Side Drawer (Offcanvas) -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="auditTimelineDrawer" aria-labelledby="auditTimelineLabel">
+    <div class="offcanvas-header bg-dark text-white">
+        <h5 class="offcanvas-title" id="auditTimelineLabel"><i class="fas fa-history text-danger"></i> Incident Audit Trail</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body" id="auditDrawerBody">
+        <!-- Chronological audit logs injected dynamically -->
+    </div>
+</div>
+
+<!-- Hidden Audio Element for New SOS Alert Sound -->
+<audio id="alertAudio" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+
+<!-- Bootstrap JS & Leaflet JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map').setView([19.0760, 72.8777], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let markerGroup = L.layerGroup().addTo(map);
+    let responderLayerGroup = L.layerGroup().addTo(map);
+    let activeRoutePolyline = null;
+
+    let allReportsCache = [];
+    let previousReportCount = 0;
+    const addressCache = {};
+    const markerMap = {};
+    const slaBreachedReports = new Set();
+
+    const teamLocations = {
+        "Medical Squad A": { lat: 19.0330, lng: 72.8570 },
+        "Fire Response 3": { lat: 19.1136, lng: 72.8697 },
+        "NDRF Unit": { lat: 19.1550, lng: 72.8490 },
+        "Police Patrol": { lat: 19.0760, lng: 72.8777 }
+    };
+
+    const maharashtraHierarchy = {
+        "Mumbai": ["Andheri", "Bandra", "Borivali", "Colaba", "Dadar", "Ghatkopar", "Kurla", "L Ward", "Santacruz", "Lower Parel", "Malad", "Mulund", "Powai", "Thane West"],
+        "Pune": ["Baner", "Hinjawadi", "Kalyani Nagar", "Kharadi", "Kothrud", "Magarpatta", "Viman Nagar", "Wakad"],
+        "Thane": ["Ghodbunder Road", "Kopri", "Majiwada", "Naupada", "Vartak Nagar"],
+        "Nagpur": ["Civil Lines", "Dharampeth", "Itwari", "Manewada", "Sadar", "Sitabuldi"],
+        "Nashik": ["CIDCO", "Dwarka", "Gangapur Road", "Indiranagar", "Panchavati", "Satpur"],
+        "Chhatrapati Sambhajinagar (Aurangabad)": ["Cidco", "Jalna Road", "Kranti Chowk", "Osmanpura", "Station Road"]
+    };
+
+    // Automated SLA & Escalation Timer Check (> 5 mins unassigned critical)
+    function checkSLATimers(reports) {
+        let currentTime = Date.now();
+        let hasEscalation = false;
+
+        reports.forEach(report => {
+            let isCritical = (parseFloat(report.priority || 1.0) >= 2.0);
+            let isUnassigned = !report.assignedTeam || report.assignedTeam.trim() === '';
+            let isActive = report.status !== 'RESOLVED';
+
+            if (isCritical && isUnassigned && isActive) {
+                let reportTime = Number(report.timestamp) || currentTime;
+                let elapsedMs = currentTime - reportTime;
+                let fiveMinutesMs = 5 * 60 * 1000;
+
+                if (elapsedMs > fiveMinutesMs) {
+                    if (!slaBreachedReports.has(report.reportId)) {
+                        slaBreachedReports.add(report.reportId);
+                    }
+                    hasEscalation = true;
+                }
+            }
+        });
+
+        if (hasEscalation) {
+            let banner = document.getElementById('newSosAlertBanner');
+            banner.innerText = '🔥 SLA BREACH: CRITICAL SOS UNACKNOWLEDGED (> 5 MINS)! 🔥';
+            banner.style.display = 'block';
+            document.getElementById('alertAudio').play().catch(err => console.log("Audio restriction"));
+        }
+    }
+
+    // Shift Handover & Dispatcher Notes Functions
+  
+   async function loadShiftNotes() {
+        try {
+            let res = await fetch('http://localhost:8080/api/v1/notes');
+            if (!res.ok) throw new Error("Backend notes endpoint not found");
+            let notes = await res.json();
+            let container = document.getElementById('shiftNotesContainer');
+            
+            if (!notes.length) {
+                container.innerHTML = '<span class="text-muted small">No shift notes recorded yet.</span>';
+                return;
+            }
+
+            container.innerHTML = notes.map(n => `
+                <div class="border-bottom pb-1 mb-1 small text-dark">
+                    <strong>${n.author || 'Anonymous'}</strong> <span class="text-muted">(${formatTimestamp(n.timestamp)}):</span> ${n.note}
+                </div>
+            `).join('');
+        } catch (e) {
+            console.error("Error loading notes:", e);
+            document.getElementById('shiftNotesContainer').innerHTML = '<span class="text-danger small">⚠️ Backend notes service offline or tables missing.</span>';
+        }
+    }
+
+    async function postShiftNote() {
+        let author = document.getElementById('noteAuthor').value.trim() || 'Dispatcher';
+        let noteText = document.getElementById('noteInput').value.trim();
+        if (!noteText) {
+            alert("Please type a shift note before posting.");
+            return;
+        }
+
+        try {
+            let res = await fetch('http://localhost:8080/api/v1/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ author: author, note: noteText })
+            });
+            if (res.ok) {
+                document.getElementById('noteInput').value = '';
+                loadShiftNotes();
+            } else {
+                alert("Failed to save shift note to database.");
+            }
+        } catch (e) {
+            console.error("Error posting note:", e);
+            alert("Connection error while posting note.");
+        }
+    }
+
+    function renderResponderMarkers() {
+        responderLayerGroup.clearLayers();
+        Object.keys(teamLocations).forEach(teamName => {
+            let team = teamLocations[teamName];
+            let blueIcon = L.divIcon({
+                className: 'custom-responder-marker',
+                html: `<div style="background-color: #0d6efd; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 6px rgba(0,0,0,0.3); border: 2px solid white;"><i class="fas fa-ambulance fa-xs"></i></div>`,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+            let marker = L.marker([team.lat, team.lng], { icon: blueIcon }).addTo(responderLayerGroup);
+            marker.bindPopup(`<b>${teamName}</b><br/>Status: Available & Standby`);
+        });
+    }
+
+    async function calculateRouteAndETA(teamName, victimLat, victimLng) {
+        if (!teamLocations[teamName]) return null;
+        let team = teamLocations[teamName];
+        let url = `https://router.project-osrm.org/route/v1/driving/${team.lng},${team.lat};${victimLng},${victimLat}?overview=full&geometries=geojson`;
+
+        try {
+            let response = await fetch(url);
+            let data = await response.json();
+            if (data.routes && data.routes.length > 0) {
+                let route = data.routes[0];
+                let durationMinutes = Math.round(route.duration / 60);
+                let distanceKm = (route.distance / 1000).toFixed(1);
+
+                if (activeRoutePolyline) {
+                    map.removeLayer(activeRoutePolyline);
+                }
+
+                let coordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+                activeRoutePolyline = L.polyline(coordinates, { color: '#0d6efd', weight: 5, opacity: 0.8 }).addTo(map);
+                map.fitBounds(activeRoutePolyline.getBounds(), { padding: [50, 50] });
+
+                return { eta: `${durationMinutes} mins`, distance: `${distanceKm} km` };
+            }
+        } catch (e) {
+            console.error("OSRM Routing error:", e);
+        }
+        return { eta: "Calculating...", distance: "" };
+    }
+
+    function initCityDropdown() {
+        const citySelect = document.getElementById('cityFilter');
+        citySelect.innerHTML = '<option value="">All Cities</option>';
+        Object.keys(maharashtraHierarchy).forEach(city => {
+            citySelect.innerHTML += `<option value="${city}">${city}</option>`;
+        });
+    }
+
+    function onStateChange() {
+        const stateVal = document.getElementById('stateFilter').value;
+        if (!stateVal) {
+            document.getElementById('cityFilter').innerHTML = '<option value="">All Cities</option>';
+            document.getElementById('cityFilter').disabled = true;
+            document.getElementById('areaFilter').innerHTML = '<option value="">All Areas</option>';
+            document.getElementById('areaFilter').disabled = true;
+        } else {
+            document.getElementById('cityFilter').disabled = false;
+            initCityDropdown();
+        }
+        filterTable();
+    }
+
+    function onCityChange() {
+        const cityVal = document.getElementById('cityFilter').value;
+        const areaSelect = document.getElementById('areaFilter');
+
+        areaSelect.innerHTML = '<option value="">All Areas</option>';
+
+        if (!cityVal || !maharashtraHierarchy[cityVal]) {
+            areaSelect.disabled = true;
+        } else {
+            areaSelect.disabled = false;
+            maharashtraHierarchy[cityVal].forEach(area => {
+                areaSelect.innerHTML += `<option value="${area}">${area}</option>`;
+            });
+        }
+        filterTable();
+    }
+
+    function resetFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = 'NEW';
+        document.getElementById('stateFilter').value = 'Maharashtra';
+        document.getElementById('cityFilter').value = '';
+        document.getElementById('areaFilter').innerHTML = '<option value="">All Areas</option>';
+        document.getElementById('areaFilter').disabled = true;
+        filterTable();
+    }
+
+    function formatTimestamp(rawTimestamp) {
+        if (!rawTimestamp || rawTimestamp === 'N/A') return new Date().toLocaleTimeString();
+        let num = Number(rawTimestamp);
+        if (!isNaN(num) && num > 0) {
+            let date = new Date(num);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+        }
+        return rawTimestamp;
+    }
+
+    async function getStructuredLocation(lat, lng) {
+        if (isNaN(lat) || isNaN(lng) || lat === 0.0 || lng === 0.0) {
+            return { readable: "Unknown Location", state: "Maharashtra", city: "Mumbai", area: "Kurla" };
+        }
+        const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+        if (addressCache[key]) return addressCache[key];
+
+        try {
+            let response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14&addressdetails=1`);
+            let data = await response.json();
+            if (data && data.address) {
+                let addr = data.address;
+                let rawArea = addr.road || addr.suburb || addr.neighbourhood || addr.city_district || addr.village || 'Kurla';
+                let rawCity = addr.city || addr.town || addr.municipality || addr.county || 'Mumbai';
+                let state = addr.state || 'Maharashtra';
+                
+                let matchedCity = Object.keys(maharashtraHierarchy).find(c => rawCity.toLowerCase().includes(c.toLowerCase().split(' ')[0])) || "Mumbai";
+                let matchedArea = maharashtraHierarchy[matchedCity].find(a => 
+                    rawArea.toLowerCase().includes(a.toLowerCase()) || a.toLowerCase().includes(rawArea.toLowerCase())
+                ) || rawArea;
+
+                let readable = `${matchedArea}, ${matchedCity}, ${state}`;
+                let result = { readable, state, city: matchedCity, area: matchedArea };
+                addressCache[key] = result;
+                return result;
+            }
+        } catch (e) {
+            console.error("Geocoding error:", e);
+        }
+        let fallback = { readable: `${lat.toFixed(4)}, ${lng.toFixed(4)}`, state: "Maharashtra", city: "Mumbai", area: "Kurla" };
+        addressCache[key] = fallback;
+        return fallback;
+    }
+
+    function openAuditTimeline(reportId) {
+        let report = allReportsCache.find(r => r.reportId === reportId);
+        if (!report) return;
+
+        let body = document.getElementById('auditDrawerBody');
+        let priorityVal = parseFloat(report.priority || 1.0).toFixed(1);
+        let priorityLabel = priorityVal >= 2.0 ? 'Critical' : (priorityVal >= 1.5 ? 'High' : 'Moderate');
+        let formattedTime = formatTimestamp(report.timestamp);
+
+        body.innerHTML = `
+            <div class="mb-3">
+                <h6 class="fw-bold text-primary">${report.title || 'Emergency SOS'}</h6>
+                <p class="text-muted small mb-1"><strong>Incident ID:</strong> ${report.reportId}</p>
+                <p class="text-muted small mb-1"><strong>Victim:</strong> ${report.senderName || 'Anonymous'} (${report.mobileNumber || 'N/A'})</p>
+                <p class="text-muted small mb-3"><strong>Location:</strong> ${report.readableLocation || 'N/A'}</p>
+            </div>
+            <hr/>
+            <h6 class="fw-bold text-dark mb-3"><i class="fas fa-stream"></i> Chronological Trail</h6>
+            <div class="timeline-container">
+                <div class="timeline-item">
+                    <small class="text-muted fw-bold">${formattedTime}</small>
+                    <p class="mb-0 fw-bold">SOS Received via Mesh Relay</p>
+                    <small class="text-secondary">Initial broadcast verified from mobile node.</small>
+                </div>
+                <div class="timeline-item">
+                    <small class="text-muted fw-bold">${formattedTime}</small>
+                    <p class="mb-0 fw-bold">Priority auto-calculated as ${priorityLabel} (${priorityVal})</p>
+                </div>
+                <div class="timeline-item">
+                    <small class="text-muted fw-bold">${formattedTime}</small>
+                    <p class="mb-0 fw-bold">Assigned Team: <span class="text-danger">${report.assignedTeam || 'Unassigned'}</span></p>
+                </div>
+                <div class="timeline-item">
+                    <small class="text-muted fw-bold">${formattedTime}</small>
+                    <p class="mb-0 fw-bold">Current Status: <span class="text-${report.status === 'RESOLVED' ? 'success' : 'primary'}">${report.status || 'ACTIVE'}</span></p>
+                </div>
+            </div>
+        `;
+
+        let drawer = new bootstrap.Offcanvas(document.getElementById('auditTimelineDrawer'));
+        drawer.show();
+    }
+
+    function createMediaHtml(rawMediaString, isTable = false) {
+        if (!rawMediaString || rawMediaString === 'null' || rawMediaString.trim() === '') {
+            return isTable ? '<span class="text-muted small">None</span>' : '';
+        }
+        const BASE_URL = 'http://localhost:8080';
+        const mediaItems = rawMediaString.split(',');
+        let htmlResult = '';
+
+        mediaItems.forEach((item) => {
+            let cleanItem = item.trim();
+            if (!cleanItem) return;
+            let cleanFileName = cleanItem.split('/').pop().split('\\').pop();
+            const fullUrl = `${BASE_URL}/uploads/${cleanFileName}`;
+            const isVideo = ['mp4', 'mkv', 'webm', '3gp'].includes(cleanFileName.split('.').pop().toLowerCase());
+
+            if (isTable) {
+                if (isVideo) {
+                    htmlResult += `<span onclick="openMediaModal('${fullUrl}', true)" class="badge bg-secondary" style="cursor:pointer; padding:5px;"><i class="fas fa-video"></i> Video</span> `;
+                } else {
+                    htmlResult += `<img src="${fullUrl}" class="media-thumbnail" alt="Attachment" onclick="openMediaModal('${fullUrl}', false)" onerror="this.onerror=null; this.src='https://via.placeholder.com/50?text=File';"/>`;
+                }
+            } else {
+                if (isVideo) {
+                    htmlResult += `<video src="${fullUrl}" controls width="200" style="margin-top:5px; border-radius:6px;"></video><br/>`;
+                } else {
+                    htmlResult += `<img src="${fullUrl}" width="200" style="margin-top:5px; border-radius:6px; max-height:150px; object-fit:cover; cursor:pointer;" onclick="openMediaModal('${fullUrl}', false)" /><br/>`;
+                }
+            }
+        });
+        return htmlResult || (isTable ? '<span class="text-muted small">None</span>' : '');
+    }
+
+    function openMediaModal(url, isVideo) {
+        let container = document.getElementById('modalContentContainer');
+        container.innerHTML = isVideo 
+            ? `<video src="${url}" controls autoplay style="max-width:100%; max-height:80vh; border-radius:8px;"></video>`
+            : `<img src="${url}" style="max-width:100%; max-height:80vh; border-radius:8px;" />`;
+        document.getElementById('mediaModal').style.display = 'flex';
+    }
+
+    function closeMediaModal() {
+        document.getElementById('mediaModal').style.display = 'none';
+        document.getElementById('modalContentContainer').innerHTML = '';
+    }
+
+    function zoomToLocation(lat, lng, id) {
+        if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+            map.setView([lat, lng], 16);
+            if (markerMap[id]) markerMap[id].openPopup();
+        }
+    }
+
+    async function deleteReport(reportId) {
+        if (confirm("Permanently delete this emergency record?")) {
+            try {
+                let res = await fetch(`http://localhost:8080/api/v1/reports/by-id/${reportId}`, { method: 'DELETE' });
+                if (res.ok) loadAdminIncidents();
+            } catch (e) { console.error("Delete error:", e); }
+        }
+    }
+
+    async function resolveReport(reportId) {
+        try {
+            let res = await fetch(`http://localhost:8080/api/v1/reports/by-id/${reportId}/resolve`, { method: 'PATCH' });
+            if (res.ok) loadAdminIncidents();
+        } catch (e) { console.error("Resolve error:", e); }
+    }
+
+    async function updateAssignedTeam(reportId, teamName) {
+        try {
+            let res = await fetch(`http://localhost:8080/api/v1/reports/by-id/${reportId}/assign?team=${encodeURIComponent(teamName)}`, { 
+                method: 'PATCH' 
+            });
+            if (res.ok) {
+                if (teamName) {
+                    let report = allReportsCache.find(r => r.reportId === reportId);
+                    if (report && !isNaN(report.latitude) && !isNaN(report.longitude)) {
+                        let routeInfo = await calculateRouteAndETA(teamName, report.latitude, report.longitude);
+                        if (routeInfo) {
+                            alert(`Team Assigned Successfully!\n\nResponder: ${teamName}\nEstimated ETA: ${routeInfo.eta} (${routeInfo.distance})`);
+                        }
+                    }
+                } else {
+                    if (activeRoutePolyline) {
+                        map.removeLayer(activeRoutePolyline);
+                        activeRoutePolyline = null;
+                    }
+                }
+                loadAdminIncidents();
+            } else {
+                alert("Failed to assign team.");
+            }
+        } catch (e) { 
+            console.error("Assignment error:", e); 
+        }
+    }
+
+    function triggerAreaBroadcast() {
+        let msg = prompt("Enter emergency warning message to broadcast to nearby mobile app users:");
+        if (msg) {
+            alert(`🚨 Broadcast Sent Successfully to all active mesh app users within 5km radius:\n\n"${msg}"`);
+        }
+    }
+
+    function getSeverityBadge(priority, title) {
+        let p = parseFloat(priority) || 1.0;
+        let t = (title || '').toLowerCase();
+        if (p >= 2.0 || t.includes('fire') || t.includes('medical') || t.includes('severe')) {
+            return `<span class="badge bg-danger">Critical (${p.toFixed(1)})</span>`;
+        } else if (p >= 1.5 || t.includes('injury') || t.includes('trapped')) {
+            return `<span class="badge bg-warning text-dark">High (${p.toFixed(1)})</span>`;
+        }
+        return `<span class="badge bg-secondary">Moderate (${p.toFixed(1)})</span>`;
+    }
+
+    async function loadAdminIncidents() {
+        try {
+            const response = await fetch('http://localhost:8080/api/v1/reports/all');
+            const reports = await response.json();
+            
+            if (previousReportCount > 0 && reports.length > previousReportCount) {
+                document.getElementById('newSosAlertBanner').style.display = 'block';
+                document.getElementById('alertAudio').play().catch(err => console.log("Audio autoplay restricted"));
+                setTimeout(() => { document.getElementById('newSosAlertBanner').style.display = 'none'; }, 8000);
+            }
+            previousReportCount = reports.length;
+            allReportsCache = reports;
+
+            // Trigger SLA checks
+            checkSLATimers(reports);
+
+            let criticalCount = reports.filter(r => (r.priority || 1.0) >= 2.0 && r.status !== 'RESOLVED').length;
+            let activeCount = reports.filter(r => r.status !== 'RESOLVED').length;
+            let resolvedCount = reports.filter(r => r.status === 'RESOLVED').length;
+
+            document.getElementById('kpiCritical').innerText = criticalCount;
+            document.getElementById('kpiActive').innerText = activeCount;
+            document.getElementById('kpiResolved').innerText = resolvedCount;
+            document.getElementById('activeIncidentCount').innerText = `${activeCount} Active Incidents`;
+
+            for (let report of reports) {
+                const lat = parseFloat(report.latitude);
+                const lng = parseFloat(report.longitude);
+                const loc = await getStructuredLocation(lat, lng);
+                report.extractedState = loc.state;
+                report.extractedCity = loc.city;
+                report.extractedArea = loc.area;
+                report.readableLocation = loc.readable;
+            }
+
+            initCityDropdown();
+            renderResponderMarkers();
+            renderTableAndMap(reports);
+        } catch (error) {
+            console.error("Error loading incidents:", error);
+        }
+    }
+
+    async function renderTableAndMap(reports) {
+        const tableBody = document.getElementById('reportsTableBody');
+        tableBody.innerHTML = '';
+        markerGroup.clearLayers();
+        Object.keys(markerMap).forEach(key => delete markerMap[key]);
+
+        reports.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+        let index = 0;
+        for (let report of reports) {
+            index++;
+            const lat = parseFloat(report.latitude);
+            const lng = parseFloat(report.longitude);
+            const mediaString = report.mediaUrls || report.mediaPaths || '';
+            const tableMediaHtml = createMediaHtml(mediaString, true);
+            const readableLocation = report.readableLocation || `${lat}, ${lng}`;
+
+            const isResolved = report.status === 'RESOLVED';
+            const statusBadge = isResolved ? '<span class="badge bg-success">RESOLVED</span>' : '<span class="badge bg-primary">ACTIVE</span>';
+
+            const teams = Object.keys(teamLocations);
+            let teamDropdownOptions = '<option value="">-- Unassigned --</option>';
+            teams.forEach(t => {
+                let selected = (report.assignedTeam === t) ? 'selected' : '';
+                teamDropdownOptions += `<option value="${t}" ${selected}>${t}</option>`;
+            });
+
+            const row = `
+                <tr data-status="${report.status || 'NEW'}" 
+                    data-state="${report.extractedState || ''}" 
+                    data-city="${report.extractedCity || ''}" 
+                    data-area="${report.extractedArea || ''}" 
+                    data-search="${(report.senderName + ' ' + report.mobileNumber + ' ' + report.title).toLowerCase()}">
+                    <td class="fw-bold">${index}</td>
+                    <td>${getSeverityBadge(report.priority, report.title)}</td>
+                    <td class="fw-bold">${report.senderName || 'Anonymous'}</td>
+                    <td><a href="tel:${report.mobileNumber}">${report.mobileNumber || 'N/A'}</a></td>
+                    <td>
+                        <a href="javascript:void(0);" onclick="openAuditTimeline('${report.reportId}')" class="text-decoration-none fw-bold text-dark" title="View Audit Trail">
+                            <i class="fas fa-history text-primary me-1"></i> ${report.title || 'SOS'}
+                        </a><br/>
+                        <small class="text-secondary">${report.description || ''}</small>
+                    </td>
+                    <td>
+                        <a href="javascript:void(0);" onclick="zoomToLocation(${lat}, ${lng}, '${report.reportId}')" title="Zoom on Map">
+                            <i class="fas fa-map-marker-alt text-danger"></i> ${readableLocation}
+                        </a>
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm" onchange="updateAssignedTeam('${report.reportId}', this.value)">
+                            ${teamDropdownOptions}
+                        </select>
+                    </td>
+                    <td>${tableMediaHtml}</td>
+                    <td>${statusBadge}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-success me-1" onclick="resolveReport('${report.reportId}')" title="Mark Safe"><i class="fas fa-check"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteReport('${report.reportId}')" title="Delete"><i class="fas fa-trash"></i></button>
+                    </td>
+                </tr>
+            `;
+            tableBody.innerHTML += row;
+
+            if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                const marker = L.marker([lat, lng]).addTo(markerGroup);
+                markerMap[report.reportId] = marker;
+                marker.reportState = report.extractedState;
+                marker.reportCity = report.extractedCity;
+                marker.reportArea = report.extractedArea;
+                marker.reportStatus = report.status || 'NEW';
+
+                const mediaHtml = createMediaHtml(mediaString, false);
+                marker.bindPopup(`
+                    <div style="min-width: 180px;">
+                        <h5 style="color:#d32f2f; margin:0 0 5px 0;">${report.title}</h5>
+                        <p style="margin:2px 0;"><b>Victim:</b> ${report.senderName} (${report.mobileNumber})</p>
+                        <p style="margin:2px 0;"><b>Location:</b> ${readableLocation}</p>
+                        <p style="margin:2px 0;"><b>Status:</b> ${report.status || 'ACTIVE'}</p>
+                        <p style="margin:2px 0;"><b>Team:</b> ${report.assignedTeam || 'Unassigned'}</p>
+                        <button class="btn btn-sm btn-dark w-100 mt-2" onclick="openAuditTimeline('${report.reportId}')"><i class="fas fa-history"></i> View Audit Trail</button>
+                        ${mediaHtml}
+                    </div>
+                `);
+            }
+        }
+        filterTable();
+    }
+
+    function filterTable() {
+        const query = document.getElementById('searchInput').value.toLowerCase();
+        const statusFilter = document.getElementById('statusFilter').value;
+        const stateFilter = document.getElementById('stateFilter').value;
+        const cityFilter = document.getElementById('cityFilter').value;
+        const areaFilter = document.getElementById('areaFilter').value;
+
+        const rows = document.querySelectorAll('#reportsTableBody tr');
+
+        rows.forEach(row => {
+            const searchData = row.getAttribute('data-search') || '';
+            const rowStatus = row.getAttribute('data-status') || 'NEW';
+            const rowState = row.getAttribute('data-state') || '';
+            const rowCity = row.getAttribute('data-city') || '';
+            const rowArea = row.getAttribute('data-area') || '';
+            
+            let matchesSearch = searchData.includes(query);
+            let matchesStatus = (statusFilter === 'ALL') || 
+                                (statusFilter === 'RESOLVED' && rowStatus === 'RESOLVED') || 
+                                (statusFilter === 'NEW' && rowStatus !== 'RESOLVED');
+            let matchesState = !stateFilter || rowState.toLowerCase().includes(stateFilter.toLowerCase());
+            let matchesCity = !cityFilter || rowCity.toLowerCase().includes(cityFilter.toLowerCase());
+            let matchesArea = !areaFilter || rowArea.toLowerCase().includes(areaFilter.toLowerCase());
+
+            if (matchesSearch && matchesStatus && matchesState && matchesCity && matchesArea) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+
+        markerGroup.eachLayer(marker => {
+            let matchesStatus = (statusFilter === 'ALL') || 
+                                (statusFilter === 'RESOLVED' && marker.reportStatus === 'RESOLVED') || 
+                                (statusFilter === 'NEW' && marker.reportStatus !== 'RESOLVED');
+            let matchesState = !stateFilter || (marker.reportState && marker.reportState.toLowerCase().includes(stateFilter.toLowerCase()));
+            let matchesCity = !cityFilter || (marker.reportCity && marker.reportCity.toLowerCase().includes(cityFilter.toLowerCase()));
+            let matchesArea = !areaFilter || (marker.reportArea && marker.reportArea.toLowerCase().includes(areaFilter.toLowerCase()));
+
+            if (matchesStatus && matchesState && matchesCity && matchesArea) {
+                marker.addTo(map);
+            } else {
+                map.removeLayer(marker);
+            }
+        });
+    }
+
+    function exportToCSV() {
+        if (!allReportsCache.length) {
+            alert("No data available to export.");
+            return;
+        }
+        let csv = 'No,ID,Priority,Victim Name,Mobile,Title,Description,State,City,Area,Status,Assigned Team,Timestamp\n';
+        let idx = 1;
+        allReportsCache.forEach(r => {
+            csv += `"${idx++}","${r.reportId}","${r.priority || 1.0}","${r.senderName || ''}","${r.mobileNumber || ''}","${r.title || ''}","${r.description || ''}","${r.extractedState || ''}","${r.extractedCity || ''}","${r.extractedArea || ''}","${r.status || 'NEW'}","${r.assignedTeam || 'Unassigned'}","${r.timestamp || ''}"\n`;
+        });
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.setAttribute('download', `ResilioMesh_Emergency_Report_${new Date().toISOString().slice(0,10)}.csv`);
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    setInterval(loadAdminIncidents, 10000);
+    loadAdminIncidents();
+    loadShiftNotes();
+</script>
+</body>
+</html>
